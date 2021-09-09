@@ -17,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -44,7 +45,34 @@ func ESPodTemplate(resources corev1.ResourceRequirements) corev1.PodTemplateSpec
 // Builder to create Elasticsearch clusters
 type Builder struct {
 	Elasticsearch esv1.Elasticsearch
-	MutatedFrom   *Builder
+
+	MutatedFrom *Builder
+
+	// expectedElasticsearch is used to compare the deployed resources with the expected ones. This is only to be used in
+	// situations where the Elasticsearch resource is modified by an external mechanism, like the autoscaling controller.
+	// In such a situation the actual resources may diverge from what was originally specified in the builder.
+	expectedElasticsearch *esv1.Elasticsearch
+}
+
+func (b Builder) DeepCopy() *Builder {
+	es := b.Elasticsearch.DeepCopy()
+	builderCopy := Builder{
+		Elasticsearch: *es,
+	}
+	if b.expectedElasticsearch != nil {
+		builderCopy.expectedElasticsearch = b.expectedElasticsearch.DeepCopy()
+	}
+	if b.MutatedFrom != nil {
+		builderCopy.MutatedFrom = b.MutatedFrom.DeepCopy()
+	}
+	return &builderCopy
+}
+
+func (b Builder) GetExpectedElasticsearch() esv1.Elasticsearch {
+	if b.expectedElasticsearch != nil {
+		return *b.expectedElasticsearch
+	}
+	return b.Elasticsearch
 }
 
 var _ test.Builder = Builder{}
@@ -78,6 +106,14 @@ func newBuilder(name, randSuffix string) Builder {
 	}.
 		WithSuffix(randSuffix).
 		WithLabel(run.TestNameLabel, name)
+}
+
+func (b Builder) WithAnnotation(key, value string) Builder {
+	if b.Elasticsearch.ObjectMeta.Annotations == nil {
+		b.Elasticsearch.ObjectMeta.Annotations = make(map[string]string)
+	}
+	b.Elasticsearch.ObjectMeta.Annotations[key] = value
+	return b
 }
 
 func (b Builder) WithSuffix(suffix string) Builder {
@@ -147,6 +183,11 @@ func (b Builder) WithHTTPSAN(ip string) Builder {
 
 func (b Builder) WithCustomTransportCA(name string) Builder {
 	b.Elasticsearch.Spec.Transport.TLS.Certificate.SecretName = name
+	return b
+}
+
+func (b Builder) WithCustomHTTPCerts(name string) Builder {
+	b.Elasticsearch.Spec.HTTP.TLS.Certificate.SecretName = name
 	return b
 }
 
@@ -236,6 +277,15 @@ func (b Builder) WithESCoordinatingNodes(count int, resources corev1.ResourceReq
 	})
 }
 
+func (b Builder) WithExpectedNodeSets(nodeSets ...esv1.NodeSet) Builder {
+	builderCopy := b.DeepCopy()
+	for _, nodeSet := range nodeSets {
+		builderCopy.WithNodeSet(nodeSet)
+	}
+	b.expectedElasticsearch = &builderCopy.Elasticsearch
+	return b
+}
+
 func (b Builder) WithNodeSet(nodeSet esv1.NodeSet) Builder {
 	// Make sure the config specifies "node.store.allow_mmap: false".
 	// We disable mmap to avoid having to set the vm.max_map_count sysctl on test k8s nodes.
@@ -252,6 +302,14 @@ func (b Builder) WithNodeSet(nodeSet esv1.NodeSet) Builder {
 		nodeSet.PodTemplate.Labels = map[string]string{}
 	}
 	nodeSet.PodTemplate.Labels[run.TestNameLabel] = b.Elasticsearch.Labels[run.TestNameLabel]
+
+	// If a nodeSet with the same name already exists, remove it
+	for i := range b.Elasticsearch.Spec.NodeSets {
+		if b.Elasticsearch.Spec.NodeSets[i].Name == nodeSet.Name {
+			b.Elasticsearch.Spec.NodeSets[i] = nodeSet
+			return b.WithDefaultPersistentVolumes()
+		}
+	}
 
 	b.Elasticsearch.Spec.NodeSets = append(b.Elasticsearch.Spec.NodeSets, nodeSet)
 	return b.WithDefaultPersistentVolumes()
@@ -394,6 +452,40 @@ func (b Builder) WithPodLabel(key, value string) Builder {
 		b.Elasticsearch.Spec.NodeSets[i].PodTemplate.Labels[key] = value
 	}
 	return b
+}
+
+func (b Builder) WithMonitoring(metricsESRef commonv1.ObjectSelector, logsESRef commonv1.ObjectSelector) Builder {
+	b.Elasticsearch.Spec.Monitoring.Metrics.ElasticsearchRefs = []commonv1.ObjectSelector{metricsESRef}
+	b.Elasticsearch.Spec.Monitoring.Logs.ElasticsearchRefs = []commonv1.ObjectSelector{logsESRef}
+	return b
+}
+
+func (b Builder) GetMetricsIndexPattern() string {
+	return ".monitoring-es-*"
+}
+
+func (b Builder) Name() string {
+	return b.Elasticsearch.Name
+}
+
+func (b Builder) Namespace() string {
+	return b.Elasticsearch.Namespace
+}
+
+func (b Builder) GetLogsCluster() *types.NamespacedName {
+	if len(b.Elasticsearch.Spec.Monitoring.Logs.ElasticsearchRefs) == 0 {
+		return nil
+	}
+	logsCluster := b.Elasticsearch.Spec.Monitoring.Logs.ElasticsearchRefs[0].NamespacedName()
+	return &logsCluster
+}
+
+func (b Builder) GetMetricsCluster() *types.NamespacedName {
+	if len(b.Elasticsearch.Spec.Monitoring.Metrics.ElasticsearchRefs) == 0 {
+		return nil
+	}
+	metricsCluster := b.Elasticsearch.Spec.Monitoring.Metrics.ElasticsearchRefs[0].NamespacedName()
+	return &metricsCluster
 }
 
 // -- Helper functions

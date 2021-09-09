@@ -11,6 +11,7 @@ This section describes how to deploy, configure and access Enterprise Search wit
 
 * <<{p}-enterprise-search-quickstart>>
 * <<{p}-enterprise-search-configuration>>
+* <<{p}-enterprise-search-troubleshoot>>
 
 [id="{p}-enterprise-search-quickstart"]
 == Quickstart
@@ -93,6 +94,38 @@ Login as the `elastic` user created link:k8s-quickstart.html[with the Elasticsea
 ----
 kubectl get secret quickstart-es-elastic-user -o=jsonpath='{.data.elastic}' | base64 --decode; echo
 ----
+
+. Access the Enterprise Search UI in Kibana.
++
+Starting with version 7.14.0, the Enterprise Search UI is accessible in Kibana.
++
+Apply the following specification to deploy Kibana, configured to connect to both Elasticsearch and Enterprise Search:
++
+[source,yaml,subs="attributes,+macros"]
+----
+cat $$<<$$EOF | kubectl apply -f -
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+metadata:
+  name: quickstart
+spec:
+  version: {version}
+  count: 1
+  elasticsearchRef:
+    name: quickstart
+  enterpriseSearchRef:
+    name: enterprise-search-quickstart
+EOF
+----
++
+Use `kubectl port-forward` to access Kibana from your local workstation:
++
+[source,sh]
+----
+kubectl port-forward service/quickstart-kb-http 5601
+----
++
+Open `https://localhost:5601` in your browser and navigate to the Enterprise Search UI.
 
 [id="{p}-enterprise-search-configuration"]
 == Configuration
@@ -210,12 +243,15 @@ See link:k8s-accessing-elastic-services.html[how to access Elastic Stack service
 
 NOTE: When exposed outside the scope of `localhost`, make sure to set `ent_search.external_url` accordingly in the Enterprise Search configuration.
 
+[id="{p}-enterprise-search-connect-es"]
+=== Customize the connection to an Elasticsearch cluster
+
+The `elasticsearchRef` element allows ECK to automatically configure Enterprise Search to establish a secured connection to a managed Elasticsearch cluster. By default it targets all nodes in your cluster. If you want to direct traffic to specific nodes of your Elasticsearch cluster, refer to <<{p}-traffic-splitting>> for more information and examples.
+
+
 [id="{p}-enterprise-search-connect-non-eck-es"]
 === Connect to an external Elasticsearch cluster
-
-The `elasticsearchRef` element allows ECK to automatically configure Enterprise Search to establish a secured connection to a managed Elasticsearch cluster.
-
-Also, you can manually configure Enterprise Search to access any available Elasticsearch cluster:
+If you do not want to use the `elasticsearchRef` mechanism or if you want to connect to an Elasticsearch cluster not managed by ECK, you can manually configure Enterprise Search to access any available Elasticsearch cluster:
 
 [source,yaml,subs="attributes,+macros"]
 ----
@@ -239,4 +275,25 @@ stringData:
     elasticsearch.username: elastic
     elasticsearch.password: my-password
     elasticsearch.ssl.enabled: true
+----
+
+[id="{p}-enterprise-search-troubleshoot"]
+== Troubleshooting
+
+[id="{p}-enterprise-search-jvm-heap-dump"]
+=== Capture a JVM heap dump
+
+For advanced troubleshooting you might need to capture a JVM heap dump. By default, the Enterprise Search Docker image is not configured to run with a data volume by the ECK operator. However, you can write a heap dump to the `tmp` directory that Enterprise Search uses. Note that your heap dump will be lost if you do not extract it before the container restarts.
+
+
+[source,sh,subs="attributes,+macros"]
+----
+kubectl exec $POD_NAME -- bash -c \
+  'jmap -dump:format=b,file=tmp/heap.hprof $(jps| grep Main | cut -f 1 -d " ")'
+
+# The Enterprise Search Docker images don't have tar installed so we cannot use kubectl cp
+kubectl exec $POD_NAME -- cat /usr/share/enterprise-search/tmp/heap.hprof | gzip -c > heap.hprof.gz
+
+# Remove the heap dump from the running container to free up space
+kubectl exec $POD_NAME -- rm /usr/share/enterprise-search/tmp/heap.hprof
 ----

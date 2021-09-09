@@ -35,25 +35,36 @@ pipeline {
         }
         stage('Run tests for different k8s versions in GKE') {
             parallel {
-                stage("1.15") {
+                stage("1.18") {
                     agent {
                         label 'linux'
                     }
                     steps {
                         unstash "source"
                         script {
-                            runWith(lib, failedTests, '1.15', "eck-gke15-${BUILD_NUMBER}-e2e")
+                            runWith(lib, failedTests, '1.18', "eck-gke18-${BUILD_NUMBER}-e2e")
                         }
                     }
                 }
-                stage("1.16") {
+                stage("1.19") {
                     agent {
                         label 'linux'
                     }
                     steps {
                         unstash "source"
                         script {
-                            runWith(lib, failedTests, '1.16', "eck-gke16-${BUILD_NUMBER}-e2e")
+                            runWith(lib, failedTests, '1.19', "eck-gke19-${BUILD_NUMBER}-e2e")
+                        }
+                    }
+                }
+                stage("1.20") {
+                    agent {
+                        label 'linux'
+                    }
+                    steps {
+                        unstash "source"
+                        script {
+                            runWith(lib, failedTests, '1.20', "eck-gke20-${BUILD_NUMBER}-e2e")
                         }
                     }
                 }
@@ -81,7 +92,7 @@ pipeline {
         }
         cleanup {
             script {
-                clusters = ["eck-gke15-${BUILD_NUMBER}-e2e", "eck-gke16-${BUILD_NUMBER}-e2e"]
+                clusters = ["eck-gke18-${BUILD_NUMBER}-e2e", "eck-gke19-${BUILD_NUMBER}-e2e", "eck-gke20-${BUILD_NUMBER}-e2e"]
                 for (int i = 0; i < clusters.size(); i++) {
                     build job: 'cloud-on-k8s-e2e-cleanup',
                         parameters: [string(name: 'JKS_PARAM_GKE_CLUSTER', value: clusters[i])],

@@ -15,10 +15,10 @@ import (
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/container"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/defaults"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/volume"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/enterprisesearch/name"
 )
 
 const (
+	EnvJavaOpts         = "JAVA_OPTS"
 	HTTPPort            = 3002
 	DefaultJavaOpts     = "-Xms3500m -Xmx3500m"
 	ConfigHashLabelName = "enterprisesearch.k8s.elastic.co/config-hash"
@@ -36,7 +36,7 @@ var (
 		},
 	}
 	DefaultEnv = []corev1.EnvVar{
-		{Name: "JAVA_OPTS", Value: DefaultJavaOpts},
+		{Name: EnvJavaOpts, Value: DefaultJavaOpts},
 	}
 	ReadinessProbe = corev1.Probe{
 		FailureThreshold:    3,
@@ -99,6 +99,6 @@ func withHTTPCertsVolume(builder *defaults.PodTemplateBuilder, ent entv1.Enterpr
 	if !ent.Spec.HTTP.TLS.Enabled() {
 		return builder
 	}
-	vol := certificates.HTTPCertSecretVolume(name.EntNamer, ent.Name)
+	vol := certificates.HTTPCertSecretVolume(entv1.Namer, ent.Name)
 	return builder.WithVolumes(vol.Volume()).WithVolumeMounts(vol.VolumeMount())
 }

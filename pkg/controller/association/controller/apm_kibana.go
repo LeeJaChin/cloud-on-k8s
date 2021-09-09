@@ -6,37 +6,30 @@ package controller
 
 import (
 	"context"
-	"fmt"
-	"strconv"
 
 	apmv1 "github.com/elastic/cloud-on-k8s/pkg/apis/apm/v1"
 	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
 	kbv1 "github.com/elastic/cloud-on-k8s/pkg/apis/kibana/v1"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/association"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/operator"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/watches"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/user"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/kibana"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/rbac"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/stringsutil"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-)
-
-const (
-	kibanaWatchNameTemplate = "%s-%s-kibana-watch"
 )
 
 func AddApmKibana(mgr manager.Manager, accessReviewer rbac.AccessReviewer, params operator.Parameters) error {
 	return association.AddAssociationController(mgr, accessReviewer, params, association.AssociationInfo{
 		AssociatedShortName:       "apm",
 		AssociatedObjTemplate:     func() commonv1.Associated { return &apmv1.ApmServer{} },
+		ReferencedObjTemplate:     func() client.Object { return &kbv1.Kibana{} },
 		ExternalServiceURL:        getKibanaExternalURL,
 		ReferencedResourceVersion: referencedKibanaStatusVersion,
-		ElasticsearchRef:          getElasticsearchFromKibana,
-		AssociatedNamer:           kibana.Namer,
+		ReferencedResourceNamer:   kbv1.KBNamer,
 		AssociationName:           "apm-kibana",
 		AssociationType:           commonv1.KibanaAssociationType,
 		Labels: func(associated types.NamespacedName) map[string]string {
@@ -46,32 +39,22 @@ func AddApmKibana(mgr manager.Manager, accessReviewer rbac.AccessReviewer, param
 				ApmAssociationLabelType:      commonv1.KibanaAssociationType,
 			}
 		},
-		AssociationConfAnnotationNameBase: commonv1.KibanaConfigAnnotationNameBase,
-		UserSecretSuffix:                  "apm-kb-user",
-		ESUserRole: func(_ commonv1.Associated) (string, error) {
-			return user.ApmAgentUserRole, nil
-		},
-		SetDynamicWatches: func(associated types.NamespacedName, associations []commonv1.Association, w watches.DynamicWatches) error {
-			return association.ReconcileWatch(
-				associated,
-				associations,
-				w.Kibanas,
-				fmt.Sprintf(kibanaWatchNameTemplate, associated.Namespace, associated.Name),
-				func(association commonv1.Association) types.NamespacedName {
-					return association.AssociationRef().NamespacedName()
-				},
-			)
-		},
-		ClearDynamicWatches: func(associated types.NamespacedName, w watches.DynamicWatches) {
-			association.RemoveWatch(w.Kibanas, fmt.Sprintf(kibanaWatchNameTemplate, associated.Namespace, associated.Name))
-		},
+		AssociationConfAnnotationNameBase:     commonv1.KibanaConfigAnnotationNameBase,
 		AssociationResourceNameLabelName:      kibana.KibanaNameLabelName,
 		AssociationResourceNamespaceLabelName: kibana.KibanaNamespaceLabelName,
+
+		ElasticsearchUserCreation: &association.ElasticsearchUserCreation{
+			ElasticsearchRef: getElasticsearchFromKibana,
+			UserSecretSuffix: "apm-kb-user",
+			ESUserRole: func(_ commonv1.Associated) (string, error) {
+				return user.ApmAgentUserRole, nil
+			},
+		},
 	})
 }
 
-func getKibanaExternalURL(c k8s.Client, association commonv1.Association) (string, error) {
-	kibanaRef := association.AssociationRef()
+func getKibanaExternalURL(c k8s.Client, assoc commonv1.Association) (string, error) {
+	kibanaRef := assoc.AssociationRef()
 	if !kibanaRef.IsDefined() {
 		return "", nil
 	}
@@ -79,14 +62,20 @@ func getKibanaExternalURL(c k8s.Client, association commonv1.Association) (strin
 	if err := c.Get(context.Background(), kibanaRef.NamespacedName(), &kb); err != nil {
 		return "", err
 	}
-	return stringsutil.Concat(kb.Spec.HTTP.Protocol(), "://", kibana.HTTPService(kb.Name), ".", kb.Namespace, ".svc:", strconv.Itoa(kibana.HTTPPort)), nil
+	serviceName := kibanaRef.ServiceName
+	if serviceName == "" {
+		serviceName = kbv1.HTTPService(kb.Name)
+	}
+	nsn := types.NamespacedName{Namespace: kb.Namespace, Name: serviceName}
+	return association.ServiceURL(c, nsn, kb.Spec.HTTP.Protocol())
 }
 
 // referencedKibanaStatusVersion returns the currently running version of Kibana
 // reported in its status.
 func referencedKibanaStatusVersion(c k8s.Client, kbRef types.NamespacedName) (string, error) {
 	var kb kbv1.Kibana
-	if err := c.Get(context.Background(), kbRef, &kb); err != nil {
+	err := c.Get(context.Background(), kbRef, &kb)
+	if err != nil {
 		return "", err
 	}
 	return kb.Status.Version, nil
@@ -108,5 +97,5 @@ func getElasticsearchFromKibana(c k8s.Client, association commonv1.Association) 
 		return false, commonv1.ObjectSelector{}, err
 	}
 
-	return true, kb.AssociationRef(), nil
+	return true, kb.EsAssociation().AssociationRef(), nil
 }

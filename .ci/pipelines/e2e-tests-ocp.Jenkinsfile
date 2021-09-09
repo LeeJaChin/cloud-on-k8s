@@ -4,6 +4,7 @@
 
 def failedTests = []
 def lib
+def ocpVersion = params.OCP_VERSION
 
 pipeline {
 
@@ -32,8 +33,8 @@ pipeline {
         }
         stage("Run E2E tests") {
             steps {
-                sh '.ci/setenvconfig e2e/ocp'
                 script {
+                    sh ".ci/setenvconfig e2e/ocp $ocpVersion"
                     env.SHELL_EXIT_CODE = sh(returnStatus: true, script: 'make -C .ci get-test-artifacts TARGET=ci-e2e ci')
 
                     sh 'make -C .ci TARGET=e2e-generate-xml ci'
@@ -74,7 +75,7 @@ pipeline {
         }
         cleanup {
             script {
-                sh '.ci/setenvconfig cleanup/ocp'
+                sh ".ci/setenvconfig cleanup/ocp $ocpVersion"
                 sh 'make -C .ci TARGET=run-deployer ci'
             }
             cleanWs()

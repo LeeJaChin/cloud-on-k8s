@@ -11,6 +11,7 @@ import (
 
 	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
 	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
+	stackmon "github.com/elastic/cloud-on-k8s/pkg/controller/common/stackmon/validations"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
 	esversion "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/version"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
@@ -34,6 +35,7 @@ const (
 	parseStoredVersionErrMsg = "Cannot parse current Elasticsearch version. String format must be {major}.{minor}.{patch}[-{label}]"
 	parseVersionErrMsg       = "Cannot parse Elasticsearch version. String format must be {major}.{minor}.{patch}[-{label}]"
 	pvcImmutableErrMsg       = "volume claim templates can only have their storage requests increased, if the storage class allows volume expansion. Any other change is forbidden"
+	pvcNotMountedErrMsg      = "volume claim declared but volume not mounted in any container. Note that the Elasticsearch data volume should be named 'elasticsearch-data'"
 	unsupportedConfigErrMsg  = "Configuration setting is reserved for internal use. User-configured use is unsupported"
 	unsupportedUpgradeMsg    = "Unsupported version upgrade path. Check the Elasticsearch documentation for supported upgrade paths."
 	unsupportedVersionMsg    = "Unsupported version"
@@ -49,6 +51,8 @@ var validations = []validation{
 	supportedVersion,
 	validSanIP,
 	validAutoscalingConfiguration,
+	validPVCNaming,
+	validMonitoring,
 }
 
 type updateValidation func(esv1.Elasticsearch, esv1.Elasticsearch) field.ErrorList
@@ -267,4 +271,8 @@ func validUpgradePath(current, proposed esv1.Elasticsearch) field.ErrorList {
 		errs = append(errs, field.Invalid(field.NewPath("spec").Child("version"), proposed.Spec.Version, unsupportedUpgradeMsg))
 	}
 	return errs
+}
+
+func validMonitoring(es esv1.Elasticsearch) field.ErrorList {
+	return stackmon.Validate(&es, es.Spec.Version)
 }

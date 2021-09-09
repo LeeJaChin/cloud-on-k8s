@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
+	common_name "github.com/elastic/cloud-on-k8s/pkg/controller/common/name"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -18,6 +19,9 @@ const (
 	// we duplicate it as a constant here for practical purposes.
 	Kind = "EnterpriseSearch"
 )
+
+// Namer is a Namer that is configured with the defaults for resources related to an EnterpriseSearch resource.
+var Namer = common_name.NewNamer("ent")
 
 // EnterpriseSearchSpec holds the specification of an Enterprise Search resource.
 type EnterpriseSearchSpec struct {
@@ -31,6 +35,7 @@ type EnterpriseSearchSpec struct {
 	Count int32 `json:"count,omitempty"`
 
 	// Config holds the Enterprise Search configuration.
+	// +kubebuilder:pruning:PreserveUnknownFields
 	Config *commonv1.Config `json:"config,omitempty"`
 
 	// ConfigRef contains a reference to an existing Kubernetes Secret holding the Enterprise Search configuration.
@@ -47,6 +52,7 @@ type EnterpriseSearchSpec struct {
 	// PodTemplate provides customisation options (labels, annotations, affinity rules, resource requests, and so on)
 	// for the Enterprise Search pods.
 	// +kubebuilder:validation:Optional
+	// +kubebuilder:pruning:PreserveUnknownFields
 	PodTemplate corev1.PodTemplateSpec `json:"podTemplate,omitempty"`
 
 	// ServiceAccountName is used to check access from the current resource to a resource (eg. Elasticsearch) in a different namespace.
@@ -150,6 +156,7 @@ var _ commonv1.Association = &EnterpriseSearch{}
 // +kubebuilder:printcolumn:name="nodes",type="integer",JSONPath=".status.availableNodes",description="Available nodes"
 // +kubebuilder:printcolumn:name="version",type="string",JSONPath=".status.version",description="Enterprise Search version"
 // +kubebuilder:printcolumn:name="age",type="date",JSONPath=".metadata.creationTimestamp"
+// +kubebuilder:subresource:scale:specpath=.spec.count,statuspath=.status.count,selectorpath=.status.selector
 // +kubebuilder:storageversion
 type EnterpriseSearch struct {
 	metav1.TypeMeta   `json:",inline"`

@@ -5,8 +5,6 @@
 package v1alpha1
 
 import (
-	"crypto/sha256"
-	"encoding/base32"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -39,6 +37,7 @@ type AgentSpec struct {
 
 	// Config holds the Agent configuration. At most one of [`Config`, `ConfigRef`] can be specified.
 	// +kubebuilder:validation:Optional
+	// +kubebuilder:pruning:PreserveUnknownFields
 	Config *commonv1.Config `json:"config,omitempty"`
 
 	// ConfigRef contains a reference to an existing Kubernetes Secret holding the Agent configuration.
@@ -53,7 +52,7 @@ type AgentSpec struct {
 	// +kubebuilder:validation:Optional
 	SecureSettings []commonv1.SecretSource `json:"secureSettings,omitempty"`
 
-	// ServiceAccountName is used to check access from the current resource to a Elasticsearch resource in a different namespace.
+	// ServiceAccountName is used to check access from the current resource to an Elasticsearch resource in a different namespace.
 	// Can only be used if ECK is enforcing RBAC on references.
 	// +kubebuilder:validation:Optional
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
@@ -67,6 +66,30 @@ type AgentSpec struct {
 	// Cannot be used along with `daemonSet`.
 	// +kubebuilder:validation:Optional
 	Deployment *DeploymentSpec `json:"deployment,omitempty"`
+
+	// HTTP holds the HTTP layer configuration for the Agent in Fleet mode with Fleet Server enabled.
+	// +kubebuilder:validation:Optional
+	HTTP commonv1.HTTPConfig `json:"http,omitempty"`
+
+	// Mode specifies the source of configuration for the Agent. The configuration can be specified locally through
+	// `config` or `configRef` (`standalone` mode), or come from Fleet during runtime (`fleet` mode).
+	// Defaults to `standalone` mode.
+	// +kubebuilder:validation:Optional
+	Mode AgentMode `json:"mode,omitempty"`
+
+	// FleetServerEnabled determines whether this Agent will launch Fleet Server. Don't set unless `mode` is set to `fleet`.
+	// +kubebuilder:validation:Optional
+	FleetServerEnabled bool `json:"fleetServerEnabled,omitempty"`
+
+	// KibanaRef is a reference to Kibana where Fleet should be set up and this Agent should be enrolled. Don't set
+	// unless `mode` is set to `fleet`.
+	// +kubebuilder:validation:Optional
+	KibanaRef commonv1.ObjectSelector `json:"kibanaRef,omitempty"`
+
+	// FleetServerRef is a reference to Fleet Server that this Agent should connect to to obtain it's configuration.
+	// Don't set unless `mode` is set to `fleet`.
+	// +kubebuilder:validation:Optional
+	FleetServerRef commonv1.ObjectSelector `json:"fleetServerRef,omitempty"`
 }
 
 type Output struct {
@@ -75,6 +98,7 @@ type Output struct {
 }
 
 type DaemonSetSpec struct {
+	// +kubebuilder:pruning:PreserveUnknownFields
 	PodTemplate corev1.PodTemplateSpec `json:"podTemplate,omitempty"`
 
 	// +kubebuilder:validation:Optional
@@ -82,6 +106,7 @@ type DaemonSetSpec struct {
 }
 
 type DeploymentSpec struct {
+	// +kubebuilder:pruning:PreserveUnknownFields
 	PodTemplate corev1.PodTemplateSpec `json:"podTemplate,omitempty"`
 	Replicas    *int32                 `json:"replicas,omitempty"`
 
@@ -106,6 +131,12 @@ type AgentStatus struct {
 
 	// +kubebuilder:validation:Optional
 	ElasticsearchAssociationsStatus commonv1.AssociationStatusMap `json:"elasticsearchAssociationsStatus,omitempty"`
+
+	// +kubebuilder:validation:Optional
+	KibanaAssociationStatus commonv1.AssociationStatus `json:"kibanaAssociationStatus,omitempty"`
+
+	// +kubebuilder:validation:Optional
+	FleetServerAssociationStatus commonv1.AssociationStatus `json:"fleetServerAssociationStatus,omitempty"`
 }
 
 type AgentHealth string
@@ -125,6 +156,28 @@ const (
 	AgentGreenHealth AgentHealth = "green"
 )
 
+// +kubebuilder:validation:Enum=standalone;fleet
+
+type AgentMode string
+
+const (
+	// AgentStandaloneMode denotes running the Agent as standalone.
+	AgentStandaloneMode AgentMode = "standalone"
+
+	// AgentFleetMode denotes running the Agent using Fleet.
+	AgentFleetMode AgentMode = "fleet"
+)
+
+// FleetModeEnabled returns true iff the Agent is running in fleet mode.
+func (a AgentSpec) FleetModeEnabled() bool {
+	return a.Mode == AgentFleetMode
+}
+
+// StandaloneModeEnabled returns true iff the Agent is running in standalone mode. Takes into the account the default.
+func (a AgentSpec) StandaloneModeEnabled() bool {
+	return a.Mode == "" || a.Mode == AgentStandaloneMode
+}
+
 // +kubebuilder:object:root=true
 
 // Agent is the Schema for the Agents API.
@@ -140,9 +193,11 @@ type Agent struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec       AgentSpec                                         `json:"spec,omitempty"`
-	Status     AgentStatus                                       `json:"status,omitempty"`
-	assocConfs map[types.NamespacedName]commonv1.AssociationConf `json:"-"`
+	Spec         AgentSpec                                         `json:"spec,omitempty"`
+	Status       AgentStatus                                       `json:"status,omitempty"`
+	esAssocConfs map[types.NamespacedName]commonv1.AssociationConf `json:"-"`
+	kbAssocConf  *commonv1.AssociationConf                         `json:"-"`
+	fsAssocConf  *commonv1.AssociationConf                         `json:"-"`
 }
 
 // +kubebuilder:object:root=true
@@ -155,6 +210,18 @@ func (a *Agent) GetAssociations() []commonv1.Association {
 		associations = append(associations, &AgentESAssociation{
 			Agent: a,
 			ref:   ref.WithDefaultNamespace(a.Namespace).NamespacedName(),
+		})
+	}
+
+	if a.Spec.KibanaRef.IsDefined() {
+		associations = append(associations, &AgentKibanaAssociation{
+			Agent: a,
+		})
+	}
+
+	if a.Spec.FleetServerRef.IsDefined() {
+		associations = append(associations, &AgentFleetServerAssociation{
+			Agent: a,
 		})
 	}
 
@@ -171,20 +238,44 @@ func (a *Agent) IsMarkedForDeletion() bool {
 }
 
 func (a *Agent) AssociationStatusMap(typ commonv1.AssociationType) commonv1.AssociationStatusMap {
-	if typ != commonv1.ElasticsearchAssociationType {
-		return commonv1.AssociationStatusMap{}
+	switch typ {
+	case commonv1.ElasticsearchAssociationType:
+		return a.Status.ElasticsearchAssociationsStatus
+	case commonv1.KibanaAssociationType:
+		if a.Spec.KibanaRef.IsDefined() {
+			return commonv1.NewSingleAssociationStatusMap(a.Status.KibanaAssociationStatus)
+		}
+	case commonv1.FleetServerAssociationType:
+		if a.Spec.FleetServerRef.IsDefined() {
+			return commonv1.NewSingleAssociationStatusMap(a.Status.FleetServerAssociationStatus)
+		}
 	}
 
-	return a.Status.ElasticsearchAssociationsStatus
+	return commonv1.AssociationStatusMap{}
 }
 
 func (a *Agent) SetAssociationStatusMap(typ commonv1.AssociationType, status commonv1.AssociationStatusMap) error {
-	if typ != commonv1.ElasticsearchAssociationType {
+	switch typ {
+	case commonv1.ElasticsearchAssociationType:
+		a.Status.ElasticsearchAssociationsStatus = status
+		return nil
+	case commonv1.KibanaAssociationType:
+		single, err := status.Single()
+		if err != nil {
+			return err
+		}
+		a.Status.KibanaAssociationStatus = single
+		return nil
+	case commonv1.FleetServerAssociationType:
+		single, err := status.Single()
+		if err != nil {
+			return err
+		}
+		a.Status.FleetServerAssociationStatus = single
+		return nil
+	default:
 		return fmt.Errorf("association type %s not known", typ)
 	}
-
-	a.Status.ElasticsearchAssociationsStatus = status
-	return nil
 }
 
 func (a *Agent) SecureSettings() []commonv1.SecretSource {
@@ -197,11 +288,11 @@ type AgentESAssociation struct {
 	ref types.NamespacedName
 }
 
+var _ commonv1.Association = &AgentESAssociation{}
+
 func (aea *AgentESAssociation) AssociationID() string {
 	return fmt.Sprintf("%s-%s", aea.ref.Namespace, aea.ref.Name)
 }
-
-var _ commonv1.Association = &AgentESAssociation{}
 
 func (aea *AgentESAssociation) Associated() commonv1.Associated {
 	if aea == nil {
@@ -225,28 +316,14 @@ func (aea *AgentESAssociation) AssociationRef() commonv1.ObjectSelector {
 }
 
 func (aea *AgentESAssociation) AssociationConfAnnotationName() string {
-	// annotation key should be stable to allow Agent Controller only pick up the ones it expects,
-	// based on ElasticsearchRefs
-
-	nsNameHash := sha256.New224()
-	// concat with dot to avoid collisions, as namespace can't contain dots
-	_, _ = nsNameHash.Write([]byte(fmt.Sprintf("%s.%s", aea.ref.Namespace, aea.ref.Name)))
-	// base32 to encode and limit the length, as using Sprintf with "%x" encodes with base16 which happens to
-	// give too long output
-	// no padding to avoid illegal '=' character in the annotation name
-	hash := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(nsNameHash.Sum(nil))
-
-	return commonv1.FormatNameWithID(
-		commonv1.ElasticsearchConfigAnnotationNameBase+"%s",
-		hash,
-	)
+	return commonv1.ElasticsearchConfigAnnotationName(aea.ref)
 }
 
 func (aea *AgentESAssociation) AssociationConf() *commonv1.AssociationConf {
-	if aea.assocConfs == nil {
+	if aea.esAssocConfs == nil {
 		return nil
 	}
-	assocConf, found := aea.assocConfs[aea.ref]
+	assocConf, found := aea.esAssocConfs[aea.ref]
 	if !found {
 		return nil
 	}
@@ -255,12 +332,92 @@ func (aea *AgentESAssociation) AssociationConf() *commonv1.AssociationConf {
 }
 
 func (aea *AgentESAssociation) SetAssociationConf(conf *commonv1.AssociationConf) {
-	if aea.assocConfs == nil {
-		aea.assocConfs = make(map[types.NamespacedName]commonv1.AssociationConf)
+	if aea.esAssocConfs == nil {
+		aea.esAssocConfs = make(map[types.NamespacedName]commonv1.AssociationConf)
 	}
 	if conf != nil {
-		aea.assocConfs[aea.ref] = *conf
+		aea.esAssocConfs[aea.ref] = *conf
 	}
+}
+
+type AgentKibanaAssociation struct {
+	*Agent
+}
+
+var _ commonv1.Association = &AgentKibanaAssociation{}
+
+func (a *AgentKibanaAssociation) AssociationConf() *commonv1.AssociationConf {
+	return a.kbAssocConf
+}
+
+func (a *AgentKibanaAssociation) SetAssociationConf(conf *commonv1.AssociationConf) {
+	a.kbAssocConf = conf
+}
+
+func (a *AgentKibanaAssociation) Associated() commonv1.Associated {
+	if a == nil {
+		return nil
+	}
+	if a.Agent == nil {
+		a.Agent = &Agent{}
+	}
+	return a.Agent
+}
+
+func (a *AgentKibanaAssociation) AssociationType() commonv1.AssociationType {
+	return commonv1.KibanaAssociationType
+}
+
+func (a *AgentKibanaAssociation) AssociationRef() commonv1.ObjectSelector {
+	return a.Spec.KibanaRef.WithDefaultNamespace(a.Namespace)
+}
+
+func (a *AgentKibanaAssociation) AssociationConfAnnotationName() string {
+	return commonv1.FormatNameWithID(commonv1.KibanaConfigAnnotationNameBase+"%s", a.AssociationID())
+}
+
+func (a *AgentKibanaAssociation) AssociationID() string {
+	return commonv1.SingletonAssociationID
+}
+
+type AgentFleetServerAssociation struct {
+	*Agent
+}
+
+var _ commonv1.Association = &AgentFleetServerAssociation{}
+
+func (a *AgentFleetServerAssociation) AssociationConf() *commonv1.AssociationConf {
+	return a.fsAssocConf
+}
+
+func (a *AgentFleetServerAssociation) SetAssociationConf(conf *commonv1.AssociationConf) {
+	a.fsAssocConf = conf
+}
+
+func (a *AgentFleetServerAssociation) Associated() commonv1.Associated {
+	if a == nil {
+		return nil
+	}
+	if a.Agent == nil {
+		a.Agent = &Agent{}
+	}
+	return a.Agent
+}
+
+func (a *AgentFleetServerAssociation) AssociationType() commonv1.AssociationType {
+	return commonv1.FleetServerAssociationType
+}
+
+func (a *AgentFleetServerAssociation) AssociationRef() commonv1.ObjectSelector {
+	return a.Spec.FleetServerRef.WithDefaultNamespace(a.Namespace)
+}
+
+func (a *AgentFleetServerAssociation) AssociationConfAnnotationName() string {
+	return commonv1.FormatNameWithID(commonv1.FleetServerConfigAnnotationNameBase+"%s", a.AssociationID())
+}
+
+func (a *AgentFleetServerAssociation) AssociationID() string {
+	return commonv1.SingletonAssociationID
 }
 
 var _ commonv1.Associated = &Agent{}

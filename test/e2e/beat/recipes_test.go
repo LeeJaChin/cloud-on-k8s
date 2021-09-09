@@ -15,10 +15,10 @@ import (
 	beatv1beta1 "github.com/elastic/cloud-on-k8s/pkg/apis/beat/v1beta1"
 	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
 	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
+	kbv1 "github.com/elastic/cloud-on-k8s/pkg/apis/kibana/v1"
 	beatcommon "github.com/elastic/cloud-on-k8s/pkg/controller/beat/common"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/settings"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/kibana"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/net"
 	"github.com/elastic/cloud-on-k8s/test/e2e/test"
 	"github.com/elastic/cloud-on-k8s/test/e2e/test/beat"
@@ -154,7 +154,7 @@ func TestHeartbeatEsKbHealthRecipe(t *testing.T) {
 
 		spec := builder.Beat.Spec
 		newEsHost := fmt.Sprintf("%s.%s.svc", esv1.HTTPService(spec.ElasticsearchRef.Name), builder.Beat.Namespace)
-		newKbHost := fmt.Sprintf("%s.%s.svc", kibana.HTTPService(spec.KibanaRef.Name), builder.Beat.Namespace)
+		newKbHost := fmt.Sprintf("%s.%s.svc", kbv1.HTTPService(spec.KibanaRef.Name), builder.Beat.Namespace)
 
 		yaml := string(yamlBytes)
 		yaml = strings.ReplaceAll(yaml, "elasticsearch-es-http.default.svc", newEsHost)
@@ -175,8 +175,10 @@ func TestHeartbeatEsKbHealthRecipe(t *testing.T) {
 }
 
 func TestAuditbeatHostsRecipe(t *testing.T) {
-	if test.Ctx().Provider == "kind" {
-		// kind doesn't support configuring required settings
+
+	if test.Ctx().Provider == "kind" || test.Ctx().HasTag(test.ArchARMTag) {
+		// Skipping test because recipe relies on syscall audit rules unavailable on arm64
+		// Also: kind doesn't support configuring required settings
 		// see https://github.com/elastic/cloud-on-k8s/issues/3328 for more context
 		t.SkipNow()
 	}
@@ -242,7 +244,7 @@ func runBeatRecipe(
 
 		// OpenShift requires different securityContext than provided in the recipe.
 		// Skipping it altogether to reduce maintenance burden.
-		if test.Ctx().Provider == "ocp" {
+		if strings.HasPrefix(test.Ctx().Provider, "ocp") {
 			t.SkipNow()
 		}
 

@@ -9,9 +9,12 @@ import (
 	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
 	entv1 "github.com/elastic/cloud-on-k8s/pkg/apis/enterprisesearch/v1"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 	"github.com/elastic/cloud-on-k8s/test/e2e/cmd/run"
 	"github.com/elastic/cloud-on-k8s/test/e2e/test"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -76,7 +79,16 @@ func newBuilder(name, randSuffix string) Builder {
 	}.
 		WithSuffix(randSuffix).
 		WithLabel(run.TestNameLabel, name).
-		WithPodLabel(run.TestNameLabel, name)
+		WithPodLabel(run.TestNameLabel, name).
+		// allows running with ES 8.0.0-SNAPSHOT version, to remove once 8.0.0 is released
+		WithEnvVar("ALLOW_PREVIEW_ELASTICSEARCH_8X", "true")
+}
+
+func (b Builder) Ref() commonv1.ObjectSelector {
+	return commonv1.ObjectSelector{
+		Name:      b.EnterpriseSearch.Name,
+		Namespace: b.EnterpriseSearch.Namespace,
+	}
 }
 
 func (b Builder) WithSuffix(suffix string) Builder {
@@ -163,6 +175,43 @@ func (b Builder) WithPodLabel(key, value string) Builder {
 	b.EnterpriseSearch.Spec.PodTemplate.Labels = labels
 	return b
 }
+
+func (b Builder) WithEnvVar(name, value string) Builder {
+	if len(b.EnterpriseSearch.Spec.PodTemplate.Spec.Containers) == 0 {
+		b.EnterpriseSearch.Spec.PodTemplate.Spec.Containers = []corev1.Container{{Name: entv1.EnterpriseSearchContainerName}}
+	}
+	for i, container := range b.EnterpriseSearch.Spec.PodTemplate.Spec.Containers {
+		container.Env = append(container.Env, corev1.EnvVar{Name: name, Value: value})
+		b.EnterpriseSearch.Spec.PodTemplate.Spec.Containers[i].Env = container.Env
+	}
+	return b
+}
+
+func (b Builder) Kind() string {
+	return entv1.Kind
+}
+
+func (b Builder) NSN() types.NamespacedName {
+	return k8s.ExtractNamespacedName(&b.EnterpriseSearch)
+}
+
+func (b Builder) Spec() interface{} {
+	return b.EnterpriseSearch.Spec
+}
+
+func (b Builder) Count() int32 {
+	return b.EnterpriseSearch.Spec.Count
+}
+
+func (b Builder) ServiceName() string {
+	return b.EnterpriseSearch.Name + "-ent-http"
+}
+
+func (b Builder) ListOptions() []client.ListOption {
+	return test.EnterpriseSearchPodListOptions(b.EnterpriseSearch.Namespace, b.EnterpriseSearch.Name)
+}
+
+var _ test.Subject = Builder{}
 
 // -- Helper functions
 

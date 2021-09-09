@@ -27,8 +27,7 @@ const (
 	// It is set at a relatively high value due to low resources in continuous integration.
 	ControlPlaneStartTimeout = 1 * time.Minute
 	BootstrapTestEnvRetries  = 1
-
-	CRDsRelativePath = "../../../config/crds"
+	CRDsRelativePath         = "../../../config/crds/v1"
 )
 
 var Config *rest.Config

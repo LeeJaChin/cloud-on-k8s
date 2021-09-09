@@ -5,8 +5,10 @@
 package kibana
 
 import (
+	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -24,6 +26,7 @@ type Builder struct {
 }
 
 var _ test.Builder = Builder{}
+var _ test.Subject = Builder{}
 
 func (b Builder) SkipTest() bool {
 	return false
@@ -76,6 +79,11 @@ func (b Builder) WithSuffix(suffix string) Builder {
 
 func (b Builder) WithElasticsearchRef(ref commonv1.ObjectSelector) Builder {
 	b.Kibana.Spec.ElasticsearchRef = ref
+	return b
+}
+
+func (b Builder) WithEnterpriseSearchRef(ref commonv1.ObjectSelector) Builder {
+	b.Kibana.Spec.EnterpriseSearchRef = ref
 	return b
 }
 
@@ -165,6 +173,74 @@ func (b Builder) WithTLSDisabled(disabled bool) Builder {
 	return b
 }
 
+func (b Builder) WithConfig(config map[string]interface{}) Builder {
+	b.Kibana.Spec.Config = &commonv1.Config{
+		Data: config,
+	}
+
+	return b
+}
+
+func (b Builder) WithMonitoring(metricsESRef commonv1.ObjectSelector, logsESRef commonv1.ObjectSelector) Builder {
+	b.Kibana.Spec.Monitoring.Metrics.ElasticsearchRefs = []commonv1.ObjectSelector{metricsESRef}
+	b.Kibana.Spec.Monitoring.Logs.ElasticsearchRefs = []commonv1.ObjectSelector{logsESRef}
+	return b
+}
+
+func (b Builder) GetMetricsIndexPattern() string {
+	return ".monitoring-kibana-*"
+}
+
+func (b Builder) Name() string {
+	return b.Kibana.Name
+}
+
+func (b Builder) Namespace() string {
+	return b.Kibana.Namespace
+}
+
+func (b Builder) GetLogsCluster() *types.NamespacedName {
+	if len(b.Kibana.Spec.Monitoring.Logs.ElasticsearchRefs) == 0 {
+		return nil
+	}
+	logsCluster := b.Kibana.Spec.Monitoring.Logs.ElasticsearchRefs[0].NamespacedName()
+	return &logsCluster
+}
+
+func (b Builder) GetMetricsCluster() *types.NamespacedName {
+	if len(b.Kibana.Spec.Monitoring.Metrics.ElasticsearchRefs) == 0 {
+		return nil
+	}
+	metricsCluster := b.Kibana.Spec.Monitoring.Metrics.ElasticsearchRefs[0].NamespacedName()
+	return &metricsCluster
+}
+
+// -- test.Subject impl
+
+func (b Builder) NSN() types.NamespacedName {
+	return k8s.ExtractNamespacedName(&b.Kibana)
+}
+
+func (b Builder) Kind() string {
+	return kbv1.Kind
+}
+
+func (b Builder) Spec() interface{} {
+	return b.Kibana.Spec
+}
+
+func (b Builder) Count() int32 {
+	return b.Kibana.Spec.Count
+}
+
+func (b Builder) ServiceName() string {
+	return b.Kibana.Name + "-kb-http"
+}
+
+func (b Builder) ListOptions() []client.ListOption {
+	return test.KibanaPodListOptions(b.Kibana.Namespace, b.Kibana.Name)
+}
+
 // -- Helper functions
 
 func (b Builder) RuntimeObjects() []client.Object {
@@ -176,5 +252,5 @@ func (b Builder) ElasticsearchRef() commonv1.ObjectSelector {
 		return b.ExternalElasticsearchRef
 	}
 	// if no external Elasticsearch cluster is defined, use the ElasticsearchRef
-	return b.Kibana.AssociationRef()
+	return b.Kibana.EsAssociation().AssociationRef()
 }

@@ -5,8 +5,11 @@
 package v1
 
 import (
+	"fmt"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/hash"
@@ -19,6 +22,19 @@ const (
 	// we duplicate it as a constant here for practical purposes.
 	Kind = "Elasticsearch"
 )
+
+// +kubebuilder:object:root=true
+
+// ElasticsearchList contains a list of Elasticsearch clusters
+type ElasticsearchList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []Elasticsearch `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&Elasticsearch{}, &ElasticsearchList{})
+}
 
 // ElasticsearchSpec holds the specification of an Elasticsearch cluster.
 type ElasticsearchSpec struct {
@@ -72,6 +88,36 @@ type ElasticsearchSpec struct {
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:Enum=DeleteOnScaledownOnly;DeleteOnScaledownAndClusterDeletion
 	VolumeClaimDeletePolicy VolumeClaimDeletePolicy `json:"volumeClaimDeletePolicy,omitempty"`
+
+	// Monitoring enables you to collect and ship log and monitoring data of this Elasticsearch cluster.
+	// See https://www.elastic.co/guide/en/elasticsearch/reference/current/monitor-elasticsearch-cluster.html.
+	// Metricbeat and Filebeat are deployed in the same Pod as sidecars and each one sends data to one or two different
+	// Elasticsearch monitoring clusters running in the same Kubernetes cluster.
+	// +kubebuilder:validation:Optional
+	Monitoring Monitoring `json:"monitoring,omitempty"`
+}
+
+type Monitoring struct {
+	// Metrics holds references to Elasticsearch clusters which receive monitoring data from this Elasticsearch cluster.
+	// +kubebuilder:validation:Optional
+	Metrics MetricsMonitoring `json:"metrics,omitempty"`
+	// Logs holds references to Elasticsearch clusters which receive log data from this Elasticsearch cluster.
+	// +kubebuilder:validation:Optional
+	Logs LogsMonitoring `json:"logs,omitempty"`
+}
+
+type MetricsMonitoring struct {
+	// ElasticsearchRefs is a reference to a list of monitoring Elasticsearch clusters running in the same Kubernetes cluster.
+	// Due to existing limitations, only a single Elasticsearch cluster is currently supported.
+	// +kubebuilder:validation:Required
+	ElasticsearchRefs []commonv1.ObjectSelector `json:"elasticsearchRefs,omitempty"`
+}
+
+type LogsMonitoring struct {
+	// ElasticsearchRefs is a reference to a list of monitoring Elasticsearch clusters running in the same Kubernetes cluster.
+	// Due to existing limitations, only a single Elasticsearch cluster is currently supported.
+	// +kubebuilder:validation:Required
+	ElasticsearchRefs []commonv1.ObjectSelector `json:"elasticsearchRefs,omitempty"`
 }
 
 // VolumeClaimDeletePolicy describes the delete policy for handling PersistentVolumeClaims that hold Elasticsearch data.
@@ -95,12 +141,14 @@ type TransportConfig struct {
 }
 
 type TransportTLSOptions struct {
+	// SubjectAlternativeNames is a list of SANs to include in the generated node transport TLS certificates.
+	SubjectAlternativeNames []commonv1.SubjectAlternativeName `json:"subjectAltNames,omitempty"`
 	// Certificate is a reference to a Kubernetes secret that contains the CA certificate
 	// and private key for generating node certificates.
 	// The referenced secret should contain the following:
 	//
-	// - `tls.crt`: The CA certificate in PEM format.
-	// - `tls.key`: The private key for the CA certificate in PEM format.
+	// - `ca.crt`: The CA certificate in PEM format.
+	// - `ca.key`: The private key for the CA certificate in PEM format.
 	Certificate commonv1.SecretRef `json:"certificate,omitempty"`
 }
 
@@ -219,6 +267,7 @@ type NodeSet struct {
 	Name string `json:"name"`
 
 	// Config holds the Elasticsearch configuration.
+	// +kubebuilder:pruning:PreserveUnknownFields
 	Config *commonv1.Config `json:"config,omitempty"`
 
 	// Count of Elasticsearch nodes to deploy.
@@ -228,6 +277,7 @@ type NodeSet struct {
 
 	// PodTemplate provides customisation options (labels, annotations, affinity rules, resource requests, and so on) for the Pods belonging to this NodeSet.
 	// +kubebuilder:validation:Optional
+	// +kubebuilder:pruning:PreserveUnknownFields
 	PodTemplate corev1.PodTemplateSpec `json:"podTemplate,omitempty"`
 
 	// VolumeClaimTemplates is a list of persistent volume claims to be used by each Pod in this NodeSet.
@@ -364,6 +414,8 @@ type ElasticsearchStatus struct {
 	Version string                          `json:"version,omitempty"`
 	Health  ElasticsearchHealth             `json:"health,omitempty"`
 	Phase   ElasticsearchOrchestrationPhase `json:"phase,omitempty"`
+
+	MonitoringAssociationsStatus commonv1.AssociationStatusMap `json:"monitoringAssociationStatus,omitempty"`
 }
 
 type ZenDiscoveryStatus struct {
@@ -390,13 +442,18 @@ type Elasticsearch struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ElasticsearchSpec   `json:"spec,omitempty"`
-	Status ElasticsearchStatus `json:"status,omitempty"`
+	Spec       ElasticsearchSpec                                 `json:"spec,omitempty"`
+	Status     ElasticsearchStatus                               `json:"status,omitempty"`
+	AssocConfs map[types.NamespacedName]commonv1.AssociationConf `json:"-"`
 }
 
 // IsMarkedForDeletion returns true if the Elasticsearch is going to be deleted
 func (es Elasticsearch) IsMarkedForDeletion() bool {
 	return !es.DeletionTimestamp.IsZero()
+}
+
+func (es *Elasticsearch) ServiceAccountName() string {
+	return es.Spec.ServiceAccountName
 }
 
 // IsAutoscalingDefined returns true if there is an autoscaling configuration in the annotations.
@@ -414,15 +471,123 @@ func (es Elasticsearch) SecureSettings() []commonv1.SecretSource {
 	return es.Spec.SecureSettings
 }
 
-// +kubebuilder:object:root=true
+// -- associations
 
-// ElasticsearchList contains a list of Elasticsearch clusters
-type ElasticsearchList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Elasticsearch `json:"items"`
+var _ commonv1.Associated = &Elasticsearch{}
+
+func (es *Elasticsearch) GetAssociations() []commonv1.Association {
+	associations := make([]commonv1.Association, 0)
+	for _, ref := range es.Spec.Monitoring.Metrics.ElasticsearchRefs {
+		if ref.IsDefined() {
+			associations = append(associations, &EsMonitoringAssociation{
+				Elasticsearch: es,
+				ref:           ref.WithDefaultNamespace(es.Namespace).NamespacedName(),
+			})
+		}
+	}
+	for _, ref := range es.Spec.Monitoring.Logs.ElasticsearchRefs {
+		if ref.IsDefined() {
+			associations = append(associations, &EsMonitoringAssociation{
+				Elasticsearch: es,
+				ref:           ref.WithDefaultNamespace(es.Namespace).NamespacedName(),
+			})
+		}
+	}
+	return associations
 }
 
-func init() {
-	SchemeBuilder.Register(&Elasticsearch{}, &ElasticsearchList{})
+func (es *Elasticsearch) AssociationStatusMap(typ commonv1.AssociationType) commonv1.AssociationStatusMap {
+	if typ != commonv1.EsMonitoringAssociationType {
+		return commonv1.AssociationStatusMap{}
+	}
+
+	return es.Status.MonitoringAssociationsStatus
+}
+
+func (es *Elasticsearch) SetAssociationStatusMap(typ commonv1.AssociationType, status commonv1.AssociationStatusMap) error {
+	if typ != commonv1.EsMonitoringAssociationType {
+		return fmt.Errorf("association type %s not known", typ)
+	}
+
+	es.Status.MonitoringAssociationsStatus = status
+	return nil
+}
+
+// -- association with monitoring Elasticsearch clusters
+
+// EsMonitoringAssociation helps to manage Elasticsearch+Metricbeat+Filebeat <-> Elasticsearch(es) associations
+type EsMonitoringAssociation struct {
+	// The monitored Elasticsearch cluster from where are collected logs and monitoring metrics
+	*Elasticsearch
+	// ref is the namespaced name of the Elasticsearch referenced in the Association used to send and store monitoring data
+	ref types.NamespacedName
+}
+
+var _ commonv1.Association = &EsMonitoringAssociation{}
+
+func (ema *EsMonitoringAssociation) Associated() commonv1.Associated {
+	if ema == nil {
+		return nil
+	}
+	if ema.Elasticsearch == nil {
+		ema.Elasticsearch = &Elasticsearch{}
+	}
+	return ema.Elasticsearch
+}
+
+func (ema *EsMonitoringAssociation) AssociationConfAnnotationName() string {
+	return commonv1.ElasticsearchConfigAnnotationName(ema.ref)
+}
+
+func (ema *EsMonitoringAssociation) AssociationType() commonv1.AssociationType {
+	return commonv1.EsMonitoringAssociationType
+}
+
+func (ema *EsMonitoringAssociation) AssociationRef() commonv1.ObjectSelector {
+	return commonv1.ObjectSelector{
+		Name:      ema.ref.Name,
+		Namespace: ema.ref.Namespace,
+	}
+}
+
+func (ema *EsMonitoringAssociation) AssociationConf() *commonv1.AssociationConf {
+	if ema.AssocConfs == nil {
+		return nil
+	}
+	assocConf, found := ema.AssocConfs[ema.ref]
+	if !found {
+		return nil
+	}
+
+	return &assocConf
+}
+
+func (ema *EsMonitoringAssociation) SetAssociationConf(assocConf *commonv1.AssociationConf) {
+	if ema.AssocConfs == nil {
+		ema.AssocConfs = make(map[types.NamespacedName]commonv1.AssociationConf)
+	}
+	if assocConf != nil {
+		ema.AssocConfs[ema.ref] = *assocConf
+	}
+}
+
+func (ema *EsMonitoringAssociation) AssociationID() string {
+	return fmt.Sprintf("%s-%s", ema.ref.Namespace, ema.ref.Name)
+}
+
+// HasMonitoring methods
+
+func (es *Elasticsearch) GetMonitoringMetricsRefs() []commonv1.ObjectSelector {
+	return es.Spec.Monitoring.Metrics.ElasticsearchRefs
+}
+
+func (es *Elasticsearch) GetMonitoringLogsRefs() []commonv1.ObjectSelector {
+	return es.Spec.Monitoring.Logs.ElasticsearchRefs
+}
+
+func (es *Elasticsearch) MonitoringAssociation(ref commonv1.ObjectSelector) commonv1.Association {
+	return &EsMonitoringAssociation{
+		Elasticsearch: es,
+		ref:           ref.WithDefaultNamespace(es.Namespace).NamespacedName(),
+	}
 }

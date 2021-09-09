@@ -8,6 +8,9 @@ package es
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	cryptorand "crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -18,10 +21,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blang/semver/v4"
 	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/certificates"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/events"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/reconciler"
+	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
 	"github.com/elastic/cloud-on-k8s/pkg/dev/portforward"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 	"github.com/elastic/cloud-on-k8s/test/e2e/test"
@@ -32,23 +37,267 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func TestCustomTransportCA(t *testing.T) {
-	caSecretName := "my-custom-ca"
-	esName := "test-custom-ca"
+var (
+	caSecretName = "my-custom-ca"
+
+	// ECDSA signed certificates are not supported until 7.7.1
+	ecdsaMinVersion = semver.MustParseRange(">=7.7.1")
+)
+
+func TestCustomHTTPCA(t *testing.T) {
+	esName := "test-custom-http-ca"
 	esNamespace := test.Ctx().ManagedNamespace(0)
 
-	mkTestSecret := func(cert, key []byte) corev1.Secret {
-		return corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: esNamespace,
-				Name:      caSecretName,
+	// Create a multi-node cluster so we have transient states when switching certs where some nodes still have the old ones
+	initialCluster := elasticsearch.NewBuilder(esName).
+		WithESMasterDataNodes(3, elasticsearch.DefaultResources)
+
+	// The initial Cluster builder should result in a healthy cluster as verified by the standard check steps
+	withCustomCA := initialCluster.
+		WithCustomHTTPCerts(caSecretName).
+		WithMutatedFrom(&initialCluster)
+
+	// reference to custom CA for comparison purposes
+	var customCA *certificates.CA
+
+	// tests the following sequence:
+	// 1. healthy cluster with self-signed operator provided CA
+	// 2. reconfigure to use custom certs but simulate user error on certificate setup: no rollout expected
+	// 3. reconfigure with correct custom certificates
+	// 4. reconfigure back to self-signed operator provided CA
+	k := test.NewK8sClientOrFatal()
+	test.StepList{}.
+		WithSteps(initialCluster.InitTestSteps(k)).
+		WithSteps(initialCluster.CreationTestSteps(k)).
+		WithSteps(test.CheckTestSteps(initialCluster, k)).
+		WithStep(
+			test.Step{
+				Name: "Create an invalid CA secret",
+				Test: test.Eventually(func() error {
+					bogusSecret := mkCertSecret([]byte("garbage"), []byte("more garbage"))
+					_, err := reconciler.ReconcileSecret(k.Client, bogusSecret, nil)
+					return err
+				}),
+			}).
+		WithSteps(withCustomCA.UpgradeTestSteps(k)).
+		WithSteps(test.StepList{
+			{
+				Name: "Invalid CA secret should create events",
+				Test: test.Eventually(func() error {
+					eventList, err := k.GetEvents(test.EventListOptions(esNamespace, initialCluster.Elasticsearch.Name)...)
+					if err != nil {
+						return err
+					}
+					for _, evt := range eventList {
+						if evt.Type == corev1.EventTypeWarning &&
+							evt.Reason == events.EventReconciliationError &&
+							evt.InvolvedObject.Namespace == withCustomCA.Elasticsearch.Namespace &&
+							evt.InvolvedObject.Name == withCustomCA.Elasticsearch.Name &&
+							strings.Contains(evt.Message, "can't parse") {
+							return nil
+						}
+					}
+					return fmt.Errorf("expected validation event but could not observe it")
+				}),
 			},
-			Data: map[string][]byte{
-				certificates.CertFileName: cert,
-				certificates.KeyFileName:  key,
+			{
+				Name: "Update custom CA secret",
+				Test: test.Eventually(func() error {
+					var err error
+					customCA, err = certificates.NewSelfSignedCA(certificates.CABuilderOptions{
+						Subject: pkix.Name{
+							CommonName:         "eck-e2e-test-custom-ca",
+							OrganizationalUnit: []string{"eck-e2e"},
+						},
+					})
+					if err != nil {
+						return err
+					}
+
+					privateKey, err := certificates.EncodePEMPrivateKey(customCA.PrivateKey)
+					if err != nil {
+						return err
+					}
+					caSecret := mkCertSecret(
+						certificates.EncodePEMCert(customCA.Cert.Raw),
+						privateKey,
+					)
+					_, err = reconciler.ReconcileSecret(k.Client, caSecret, nil)
+					return err
+				}),
 			},
-		}
+			{
+				Name: "Verify that the custom CA is in use",
+				Test: test.Eventually(func() error {
+					return elasticsearch.CheckHTTPConnectivityWithCA(initialCluster.Elasticsearch, k, []*x509.Certificate{customCA.Cert})
+				}),
+			},
+		}).
+		// "upgrade" back to the initial cluster without custom CA
+		WithSteps(initialCluster.UpgradeTestSteps(k)).
+		WithSteps(test.StepList{
+			{
+				Name: "Ensure built-in CA is used after removing custom CA",
+				Test: test.Eventually(func() error {
+					ca, err := k.GetCA(initialCluster.Elasticsearch.Namespace, initialCluster.Elasticsearch.Name, certificates.HTTPCAType)
+					if err != nil {
+						return err
+					}
+					if customCA != nil && customCA.Cert.Equal(ca.Cert) {
+						return errors.New("still using custom CA cert")
+					}
+					return elasticsearch.CheckHTTPConnectivityWithCA(initialCluster.Elasticsearch, k, []*x509.Certificate{ca.Cert})
+				}),
+			},
+			{
+				Name: "Clean up custom CA secret",
+				Test: func(t *testing.T) {
+					// let's clean up the CA secret here.
+					toDelete := mkCertSecret(nil, nil)
+					_ = k.Client.Delete(context.Background(), &toDelete)
+				},
+			},
+		}).
+		WithSteps(initialCluster.DeletionTestSteps(k)).
+		RunSequential(t)
+}
+
+func TestHTTPECDSA(t *testing.T) {
+	v := version.MustParse(test.Ctx().ElasticStackVersion)
+	if !ecdsaMinVersion(v) {
+		t.Skip()
 	}
+
+	esName := "test-custom-http-ecdsa-ca"
+
+	// Create a multi-node cluster so we have transient states when switching certs where some nodes still have the old ones
+	initialCluster := elasticsearch.NewBuilder(esName).
+		WithESMasterDataNodes(3, elasticsearch.DefaultResources)
+
+	// The initial Cluster builder should result in a healthy cluster as verified by the standard check steps
+	withCustomCA := initialCluster.
+		WithCustomHTTPCerts(caSecretName).
+		WithMutatedFrom(&initialCluster)
+
+	// reference to custom CA for comparison purposes
+	var customCA *certificates.CA
+
+	// tests the following sequence:
+	// 1. healthy cluster with self-signed operator provided CA signed with RSA
+	// 3. reconfigure with custom CA signed with ECDSA
+	// 4. reconfigure back to self-signed operator provided CA signed with RSA
+	k := test.NewK8sClientOrFatal()
+	test.StepList{}.
+		WithSteps(initialCluster.InitTestSteps(k)).
+		WithSteps(initialCluster.CreationTestSteps(k)).
+		WithSteps(test.CheckTestSteps(initialCluster, k)).
+		WithStep(
+			test.Step{
+				Name: "Create custom ECSDA signed CA secret",
+				Test: test.Eventually(func() error {
+					var err error
+					customCA, err = newECDSASignedCA(esName)
+					if err != nil {
+						return err
+					}
+					privateKey, err := certificates.EncodePEMPrivateKey(customCA.PrivateKey)
+					if err != nil {
+						return err
+					}
+					caSecret := mkCertSecret(
+						certificates.EncodePEMCert(customCA.Cert.Raw),
+						privateKey,
+					)
+					_, err = reconciler.ReconcileSecret(k.Client, caSecret, nil)
+					return err
+				}),
+			},
+		).
+		WithSteps(withCustomCA.UpgradeTestSteps(k)).
+		WithSteps(test.StepList{
+			{
+				Name: "Verify that the custom ECDSA CA is in use",
+				Test: test.Eventually(func() error {
+					return elasticsearch.CheckHTTPConnectivityWithCA(initialCluster.Elasticsearch, k, []*x509.Certificate{customCA.Cert})
+				}),
+			},
+		}).
+		// "upgrade" back to the initial cluster without custom CA
+		WithSteps(initialCluster.UpgradeTestSteps(k)).
+		WithSteps(test.StepList{
+			{
+				Name: "Ensure built-in CA is used after removing custom CA",
+				Test: test.Eventually(func() error {
+					ca, err := k.GetCA(initialCluster.Elasticsearch.Namespace, initialCluster.Elasticsearch.Name, certificates.HTTPCAType)
+					if err != nil {
+						return err
+					}
+					if customCA != nil && customCA.Cert.Equal(ca.Cert) {
+						return errors.New("still using custom ECDSA CA cert")
+					}
+					return elasticsearch.CheckHTTPConnectivityWithCA(initialCluster.Elasticsearch, k, []*x509.Certificate{ca.Cert})
+				}),
+			},
+			{
+				Name: "Clean up custom ECDSA  secret",
+				Test: func(t *testing.T) {
+					// let's clean up the CA secret here.
+					toDelete := mkCertSecret(nil, nil)
+					_ = k.Client.Delete(context.Background(), &toDelete)
+				},
+			},
+		}).
+		WithSteps(initialCluster.DeletionTestSteps(k)).
+		RunSequential(t)
+}
+
+func newECDSASignedCA(esName string) (*certificates.CA, error) {
+	serial, err := cryptorand.Int(cryptorand.Reader, certificates.SerialNumberLimit)
+	if err != nil {
+		return nil, err
+	}
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), cryptorand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	certificateTemplate := x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:         esName,
+			OrganizationalUnit: []string{"eck-e2e"},
+		},
+		NotBefore:             time.Now().Add(-10 * time.Minute),
+		NotAfter:              time.Now().Add(certificates.DefaultCertValidity),
+		SignatureAlgorithm:    x509.ECDSAWithSHA256,
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+	}
+	certData, err := x509.CreateCertificate(
+		cryptorand.Reader,
+		&certificateTemplate,
+		&certificateTemplate,
+		privateKey.Public(),
+		privateKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+	cert, err := x509.ParseCertificate(certData)
+	if err != nil {
+		return nil, err
+	}
+
+	return &certificates.CA{
+		PrivateKey: privateKey,
+		Cert:       cert,
+	}, nil
+}
+
+func TestCustomTransportCA(t *testing.T) {
+	esName := "test-custom-ca"
+	esNamespace := test.Ctx().ManagedNamespace(0)
 
 	// Create a multi-node cluster so we have inter-node communication
 	initialCluster := elasticsearch.NewBuilder(esName).
@@ -64,7 +313,7 @@ func TestCustomTransportCA(t *testing.T) {
 					Test: func(t *testing.T) {
 						// This is counter-intuitive but deletion steps run on the initial builder
 						// let's clean up the CA secret here.
-						toDelete := mkTestSecret(nil, nil)
+						toDelete := mkCertSecret(nil, nil)
 						_ = k.Client.Delete(context.Background(), &toDelete)
 					},
 					Skip:      nil,
@@ -87,7 +336,7 @@ func TestCustomTransportCA(t *testing.T) {
 				{
 					Name: "Create an invalid CA secret",
 					Test: test.Eventually(func() error {
-						bogusSecret := mkTestSecret([]byte("garbage"), []byte("more garbage"))
+						bogusSecret := mkCertSecret([]byte("garbage"), []byte("more garbage"))
 						_, err := reconciler.ReconcileSecret(k.Client, bogusSecret, nil)
 						return err
 					}),
@@ -142,9 +391,13 @@ func TestCustomTransportCA(t *testing.T) {
 							return err
 						}
 
-						caSecret := mkTestSecret(
+						privateKey, err := certificates.EncodePEMPrivateKey(ca.PrivateKey)
+						if err != nil {
+							return err
+						}
+						caSecret := mkCertSecret(
 							certificates.EncodePEMCert(ca.Cert.Raw),
-							certificates.EncodePEMPrivateKey(*ca.PrivateKey),
+							privateKey,
 						)
 						_, err = reconciler.ReconcileSecret(k.Client, caSecret, nil)
 						return err
@@ -302,4 +555,17 @@ func requestESWithCA(ip string, caCert []byte) (int, error) {
 	defer resp.Body.Close()
 
 	return resp.StatusCode, nil
+}
+
+func mkCertSecret(cert, key []byte) corev1.Secret {
+	return corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: test.Ctx().ManagedNamespace(0),
+			Name:      caSecretName,
+		},
+		Data: map[string][]byte{
+			certificates.CAFileName:    cert,
+			certificates.CAKeyFileName: key,
+		},
+	}
 }

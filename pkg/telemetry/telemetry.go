@@ -16,7 +16,9 @@ import (
 	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
 	entv1 "github.com/elastic/cloud-on-k8s/pkg/apis/enterprisesearch/v1"
 	kbv1 "github.com/elastic/cloud-on-k8s/pkg/apis/kibana/v1"
+	mapsv1alpha1 "github.com/elastic/cloud-on-k8s/pkg/apis/maps/v1alpha1"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/reconciler"
+	"github.com/elastic/cloud-on-k8s/pkg/controller/common/stackmon/monitoring"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/kibana"
 	"github.com/elastic/cloud-on-k8s/pkg/license"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
@@ -28,9 +30,11 @@ import (
 )
 
 const (
-	autoscaledResourceCount = "autoscaled_resource_count"
-	resourceCount           = "resource_count"
-	podCount                = "pod_count"
+	autoscaledResourceCount     = "autoscaled_resource_count"
+	resourceCount               = "resource_count"
+	podCount                    = "pod_count"
+	stackMonitoringLogsCount    = "stack_monitoring_logs_count"
+	stackMonitoringMetricsCount = "stack_monitoring_metrics_count"
 
 	timestampFieldName = "timestamp"
 )
@@ -104,6 +108,7 @@ func (r *Reporter) getResourceStats() (map[string]interface{}, error) {
 		beatStats,
 		entStats,
 		agentStats,
+		mapsStats,
 	} {
 		key, statsPart, err := f(r.client, r.managedNamespaces)
 		if err != nil {
@@ -190,10 +195,17 @@ func esStats(k8sClient k8s.Client, managedNamespaces []string) (string, interfac
 		}
 
 		for _, es := range esList.Items {
+			es := es
 			stats[resourceCount]++
 			stats[podCount] += es.Status.AvailableNodes
 			if es.IsAutoscalingDefined() {
 				stats[autoscaledResourceCount]++
+			}
+			if monitoring.IsLogsDefined(&es) {
+				stats[stackMonitoringLogsCount]++
+			}
+			if monitoring.IsMetricsDefined(&es) {
+				stats[stackMonitoringMetricsCount]++
 			}
 		}
 	}
@@ -277,6 +289,8 @@ func entStats(k8sClient k8s.Client, managedNamespaces []string) (string, interfa
 
 func agentStats(k8sClient k8s.Client, managedNamespaces []string) (string, interface{}, error) {
 	multipleRefsKey := "multiple_refs"
+	fleetModeKey := "fleet_mode"
+	fleetServerKey := "fleet_server"
 	stats := map[string]int32{resourceCount: 0, podCount: 0, multipleRefsKey: 0}
 
 	var agentList agentv1alpha1.AgentList
@@ -291,7 +305,30 @@ func agentStats(k8sClient k8s.Client, managedNamespaces []string) (string, inter
 			if len(agent.Spec.ElasticsearchRefs) > 1 {
 				stats[multipleRefsKey]++
 			}
+			if agent.Spec.FleetModeEnabled() {
+				stats[fleetModeKey]++
+			}
+			if agent.Spec.FleetServerEnabled {
+				stats[fleetServerKey]++
+			}
 		}
 	}
 	return "agents", stats, nil
+}
+
+func mapsStats(k8sClient k8s.Client, managedNamespaces []string) (string, interface{}, error) {
+	stats := map[string]int32{resourceCount: 0, podCount: 0}
+
+	var mapsList mapsv1alpha1.ElasticMapsServerList
+	for _, ns := range managedNamespaces {
+		if err := k8sClient.List(context.Background(), &mapsList, client.InNamespace(ns)); err != nil {
+			return "", nil, err
+		}
+
+		for _, maps := range mapsList.Items {
+			stats[resourceCount]++
+			stats[podCount] += maps.Status.AvailableNodes
+		}
+	}
+	return "maps", stats, nil
 }

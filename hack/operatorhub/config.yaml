@@ -1,6 +1,6 @@
-newVersion: 1.5.0
-prevVersion: 1.4.0
-stackVersion: 7.12.0
+newVersion: 1.7.1
+prevVersion: 1.7.0
+stackVersion: 7.14.0
 crds:
   - name: elasticsearches.elasticsearch.k8s.elastic.co
     displayName: Elasticsearch Cluster
@@ -20,6 +20,9 @@ crds:
   - name: agents.agent.k8s.elastic.co
     displayName: Elastic Agent
     description: Elastic Agent instance
+  - name: elasticmapsservers.maps.k8s.elastic.co
+    displayName: Elastic Maps Server
+    description: Elastic Maps Server instance
 packages:
   - outputPath: community-operators
     packageName: elastic-cloud-eck

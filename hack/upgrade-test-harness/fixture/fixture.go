@@ -7,6 +7,7 @@ package fixture
 import (
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/elastic/cloud-on-k8s/hack/upgrade-test-harness/k8s"
@@ -119,6 +120,17 @@ func retryRetriable(name string, action func(*TestContext) error) *TestStep {
 	}
 }
 
+// retryOnConflict is a convenience function to create a test step that is retried if there was a conflict.
+func retryOnConflict(name string, action func(*TestContext) error) *TestStep {
+	return &TestStep{
+		Name:   name,
+		Action: action,
+		Retriable: func(err error) bool {
+			return apierrors.IsConflict(err)
+		},
+	}
+}
+
 // noRetry is a convenience function to create a test step that is not retried.
 func noRetry(name string, action func(*TestContext) error) *TestStep {
 	return &TestStep{
@@ -154,6 +166,18 @@ func applyManifests(path string) func(*TestContext) error {
 	}
 }
 
+// replaceManifests is a convenience function to replace the provided manifests in the api server.
+func replaceManifests(path string) func(ctx *TestContext) error {
+	return func(ctx *TestContext) error {
+		manifests, err := ctx.LoadResources(path)
+		if err != nil {
+			return err
+		}
+		ctx.AddCleanupFunc(deleteResources(manifests))
+		return ctx.Replace(manifests)
+	}
+}
+
 // deleteManifests is a convenience test function that deletes the provided manifests to the cluster.
 func deleteManifests(path string) func(*TestContext) error {
 	return func(ctx *TestContext) error {
@@ -164,6 +188,16 @@ func deleteManifests(path string) func(*TestContext) error {
 
 		return ctx.Delete(manifests, deleteTimeout)
 	}
+}
+
+// ifExists runs a test action if the given path exists in the filesystem.
+func ifExists(path string, fn func(ctx *TestContext) error) func(ctx *TestContext) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return func(_ *TestContext) error {
+			return nil
+		}
+	}
+	return fn
 }
 
 // CleanupFunc is a function for cleaning up resources after the test run.

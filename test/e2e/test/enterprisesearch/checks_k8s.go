@@ -10,136 +10,19 @@ import (
 
 	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
 	entv1 "github.com/elastic/cloud-on-k8s/pkg/apis/enterprisesearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/hash"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 	"github.com/elastic/cloud-on-k8s/test/e2e/test"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
+	"github.com/elastic/cloud-on-k8s/test/e2e/test/checks"
 )
 
 func (b Builder) CheckK8sTestSteps(k *test.K8sClient) test.StepList {
 	return test.StepList{
-		CheckDeployment(b, k),
-		CheckPods(b, k),
-		CheckServices(b, k),
-		CheckServicesEndpoints(b, k),
+		checks.CheckDeployment(b, k, b.EnterpriseSearch.Name+"-ent"),
+		checks.CheckPods(b, k),
+		checks.CheckServices(b, k),
+		checks.CheckServicesEndpoints(b, k),
 		CheckSecrets(b, k),
 		CheckStatus(b, k),
-	}
-}
-
-// CheckDeployment checks the Deployment resource exists
-func CheckDeployment(b Builder, k *test.K8sClient) test.Step {
-	return test.Step{
-		Name: "EnterpriseSearch deployment should be created",
-		Test: test.Eventually(func() error {
-			var dep appsv1.Deployment
-			err := k.Client.Get(context.Background(), types.NamespacedName{
-				Namespace: b.EnterpriseSearch.Namespace,
-				Name:      b.EnterpriseSearch.Name + "-ent",
-			}, &dep)
-			if b.EnterpriseSearch.Spec.Count == 0 && apierrors.IsNotFound(err) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			if *dep.Spec.Replicas != b.EnterpriseSearch.Spec.Count {
-				return fmt.Errorf("invalid EnterpriseSearch replicas count: expected %d, got %d", b.EnterpriseSearch.Spec.Count, *dep.Spec.Replicas)
-			}
-			return nil
-		}),
-	}
-}
-
-// CheckPods checks expected Enterprise Search pods are eventually ready.
-// TODO: use a common function for all deployments (kb, apm, ent)
-func CheckPods(b Builder, k *test.K8sClient) test.Step {
-	// It is common for Enterprise Search Pods to take some time to be ready, especially
-	// during the initial bootstrap, or during version upgrades. Let's increase the timeout
-	// for this particular step.
-	timeout := test.Ctx().TestTimeout * 2
-	return test.Step{
-		Name: "Enterprise Search Pods should eventually be ready",
-		Test: test.UntilSuccess(func() error {
-			var pods corev1.PodList
-			if err := k.Client.List(context.Background(), &pods, test.EnterpriseSearchPodListOptions(b.EnterpriseSearch.Namespace, b.EnterpriseSearch.Name)...); err != nil {
-				return err
-			}
-
-			// builder hash matches
-			expectedBuilderHash := hash.HashObject(b.EnterpriseSearch.Spec)
-			for _, pod := range pods.Items {
-				if err := test.ValidateBuilderHashAnnotation(pod, expectedBuilderHash); err != nil {
-					return err
-				}
-			}
-
-			// pod count matches
-			if len(pods.Items) != int(b.EnterpriseSearch.Spec.Count) {
-				return fmt.Errorf("invalid EnterpriseSearch pod count: expected %d, got %d", b.EnterpriseSearch.Spec.Count, len(pods.Items))
-			}
-
-			// pods are running
-			for _, pod := range pods.Items {
-				if pod.Status.Phase != corev1.PodRunning {
-					return fmt.Errorf("pod not running yet")
-				}
-			}
-
-			// pods are ready
-			for _, pod := range pods.Items {
-				if !k8s.IsPodReady(pod) {
-					return fmt.Errorf("pod not ready yet")
-				}
-			}
-
-			return nil
-		}, timeout),
-	}
-}
-
-// CheckServices checks that all Enterprise Search services are created
-// TODO: refactor with other resources
-func CheckServices(b Builder, k *test.K8sClient) test.Step {
-	return test.Step{
-		Name: "Enterprise Search services should be created",
-		Test: test.Eventually(func() error {
-			for _, s := range []string{
-				b.EnterpriseSearch.Name + "-ent-http",
-			} {
-				if _, err := k.GetService(b.EnterpriseSearch.Namespace, s); err != nil {
-					return err
-				}
-			}
-			return nil
-		}),
-	}
-}
-
-// CheckServicesEndpoints checks that services have the expected number of endpoints
-func CheckServicesEndpoints(b Builder, k *test.K8sClient) test.Step {
-	return test.Step{
-		Name: "EnterpriseSearch services should have endpoints",
-		Test: test.Eventually(func() error {
-			for endpointName, addrCount := range map[string]int{
-				b.EnterpriseSearch.Name + "-ent-http": int(b.EnterpriseSearch.Spec.Count),
-			} {
-				endpoints, err := k.GetEndpoints(b.EnterpriseSearch.Namespace, endpointName)
-				if err != nil {
-					return err
-				}
-				if len(endpoints.Subsets) == 0 {
-					return fmt.Errorf("no subset for endpoint %s", endpointName)
-				}
-				if len(endpoints.Subsets[0].Addresses) != addrCount {
-					return fmt.Errorf("%d addresses found for endpoint %s, expected %d", len(endpoints.Subsets[0].Addresses), endpointName, addrCount)
-				}
-			}
-			return nil
-		}),
 	}
 }
 
@@ -222,8 +105,23 @@ func CheckStatus(b Builder, k *test.K8sClient) test.Step {
 			if err := k.Client.Get(context.Background(), k8s.ExtractNamespacedName(&b.EnterpriseSearch), &ent); err != nil {
 				return err
 			}
+
+			// Selector is a string built from a map, it is validated with a dedicated function.
+			// The expected value is hardcoded on purpose to ensure there is no regression in the way the set of labels
+			// is created.
+			if err := test.CheckSelector(
+				ent.Status.Selector,
+				map[string]string{
+					"enterprisesearch.k8s.elastic.co/name": ent.Name,
+					"common.k8s.elastic.co/type":           "enterprise-search",
+				}); err != nil {
+				return err
+			}
+			ent.Status.Selector = ""
+
 			expected := entv1.EnterpriseSearchStatus{
 				DeploymentStatus: commonv1.DeploymentStatus{
+					Count:          b.EnterpriseSearch.Spec.Count,
 					AvailableNodes: b.EnterpriseSearch.Spec.Count,
 					Version:        b.EnterpriseSearch.Spec.Version,
 					Health:         "green",

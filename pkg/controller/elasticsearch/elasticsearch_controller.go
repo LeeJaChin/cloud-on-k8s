@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
+	"github.com/elastic/cloud-on-k8s/pkg/controller/association"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/annotation"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/certificates"
@@ -159,7 +160,7 @@ func (r *ReconcileElasticsearch) Reconcile(ctx context.Context, request reconcil
 
 	// Fetch the Elasticsearch instance
 	var es esv1.Elasticsearch
-	requeue, err := r.fetchElasticsearch(ctx, request, &es)
+	requeue, err := r.fetchElasticsearchWithAssociations(ctx, request, &es)
 	if err != nil || requeue {
 		return reconcile.Result{}, tracing.CaptureError(ctx, err)
 	}
@@ -204,11 +205,11 @@ func (r *ReconcileElasticsearch) Reconcile(ctx context.Context, request reconcil
 	return results.WithError(err).Aggregate()
 }
 
-func (r *ReconcileElasticsearch) fetchElasticsearch(ctx context.Context, request reconcile.Request, es *esv1.Elasticsearch) (bool, error) {
+func (r *ReconcileElasticsearch) fetchElasticsearchWithAssociations(ctx context.Context, request reconcile.Request, es *esv1.Elasticsearch) (bool, error) {
 	span, _ := apm.StartSpan(ctx, "fetch_elasticsearch", tracing.SpanTypeApp)
 	defer span.End()
 
-	err := r.Get(context.Background(), request.NamespacedName, es)
+	err := association.FetchWithAssociations(ctx, r.Client, request, es)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// Object not found, cleanup in-memory state. Children resources are garbage-collected either by
@@ -311,7 +312,7 @@ func (r *ReconcileElasticsearch) updateStatus(
 	return common.UpdateStatus(r.Client, cluster)
 }
 
-// onDelete garbage collect resources when a Elasticsearch cluster is deleted
+// onDelete garbage collect resources when an Elasticsearch cluster is deleted
 func (r *ReconcileElasticsearch) onDelete(es types.NamespacedName) error {
 	r.expectations.RemoveCluster(es)
 	r.esObservers.StopObserving(es)

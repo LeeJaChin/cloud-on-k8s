@@ -20,15 +20,16 @@ import (
 )
 
 type configOpts struct {
-	confFile            string
-	fromRelease         string
-	logLevel            string
-	retryCount          uint
-	retryDelay          time.Duration
-	retryTimeout        time.Duration
-	skipCleanup         bool
-	toRelease           string
-	upcomingReleaseYAML string
+	confFile                string
+	fromRelease             string
+	logLevel                string
+	retryCount              uint
+	retryDelay              time.Duration
+	retryTimeout            time.Duration
+	skipCleanup             bool
+	toRelease               string
+	upcomingReleaseOperator string
+	upcomingReleaseCRDs     string
 }
 
 var (
@@ -41,7 +42,7 @@ func main() {
 	cmd := &cobra.Command{
 		Use:           "eck-upgrade-harness",
 		Short:         "Test harness for testing ECK release upgrades",
-		Version:       "0.1.0",
+		Version:       "0.2.0",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE:          doRun,
@@ -55,7 +56,8 @@ func main() {
 	cmd.Flags().DurationVar(&opts.retryTimeout, "retry-timeout", 300*time.Second, "Time limit for retries")
 	cmd.Flags().BoolVar(&opts.skipCleanup, "skip-cleanup", false, "Skip cleaning up after test run")
 	cmd.Flags().StringVar(&opts.toRelease, "to-release", "upcoming", "Release to finish with (alpha, beta, v101, v112, upcoming)")
-	cmd.Flags().StringVar(&opts.upcomingReleaseYAML, "upcoming-release-yaml", "../../config/all-in-one.yaml", "YAML file for installing the upcoming release")
+	cmd.Flags().StringVar(&opts.upcomingReleaseCRDs, "upcoming-release-crds", "../../config/crds.yaml", "YAML file for installing the CRDs for the upcoming release")
+	cmd.Flags().StringVar(&opts.upcomingReleaseOperator, "upcoming-release-operator", "../../config/operator.yaml", "YAML file for installing the operator for the upcoming release")
 
 	kubeConfFlags.AddFlags(cmd.Flags())
 
@@ -84,7 +86,10 @@ func doRun(_ *cobra.Command, _ []string) error {
 
 	// setup upcoming release if necessary
 	if conf.TestParams[to].Name == "upcoming" {
-		if err := setupUpcomingRelease(opts.upcomingReleaseYAML); err != nil {
+		if err := setupUpcomingRelease(opts.upcomingReleaseCRDs, "crds"); err != nil {
+			return fmt.Errorf("failed to setup upcoming release: %w", err)
+		}
+		if err := setupUpcomingRelease(opts.upcomingReleaseOperator, "install"); err != nil {
 			return fmt.Errorf("failed to setup upcoming release: %w", err)
 		}
 	}
@@ -112,7 +117,10 @@ func doRun(_ *cobra.Command, _ []string) error {
 	for i := from; i <= to; i++ {
 		currTestParam := conf.TestParams[i]
 
-		fixtures := buildUpgradeFixtures(prevTestParam, currTestParam)
+		fixtures, err := buildUpgradeFixtures(prevTestParam, currTestParam)
+		if err != nil {
+			return err
+		}
 
 		ctx.Infof("=====[%s]=====", currTestParam.Name)
 
@@ -142,7 +150,7 @@ func mustGetReleasePos(conf *config.File, name string) int {
 	return pos
 }
 
-func setupUpcomingRelease(installYAML string) error {
+func setupUpcomingRelease(installYAML, targetYAML string) error {
 	in, err := os.Open(installYAML)
 	if err != nil {
 		return fmt.Errorf("failed to open %s for reading: %w", installYAML, err)
@@ -150,7 +158,7 @@ func setupUpcomingRelease(installYAML string) error {
 
 	defer in.Close()
 
-	outFile := "testdata/upcoming/install.yaml"
+	outFile := fmt.Sprintf("testdata/upcoming/%s.yaml", targetYAML)
 
 	out, err := os.OpenFile(outFile, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0755)
 	if err != nil {
@@ -166,21 +174,31 @@ func setupUpcomingRelease(installYAML string) error {
 	return nil
 }
 
-func buildUpgradeFixtures(from *fixture.TestParam, to fixture.TestParam) []*fixture.Fixture {
+func buildUpgradeFixtures(from *fixture.TestParam, to fixture.TestParam) ([]*fixture.Fixture, error) {
 	fixtures := []*fixture.Fixture{fixture.TestInstallOperator(to)}
 
 	if from != nil {
-		fixtures = append(fixtures, fixture.TestStatusOfResources(*from))
+		testStatusOfResources, err := fixture.TestStatusOfResources(*from)
+		if err != nil {
+			return nil, err
+		}
+		fixtures = append(fixtures, testStatusOfResources)
 
 		// upgrade from alpha requires deleting the finalizers
 		if from.Name == "alpha" {
 			fixtures = append(fixtures, fixture.TestRemoveFinalizers(*from))
 			// delete the stack as alpha resources are no longer reconciled by later versions of the operator
 			fixtures = append(fixtures, fixture.TestRemoveResources(*from))
+			// ensure that all the services have been removed
+			fixtures = append(fixtures, fixture.ServicesShouldBeRemoved(*from))
 		}
 	}
 
-	fixtures = append(fixtures, fixture.TestDeployResources(to), fixture.TestStatusOfResources(to))
+	testStatusOfResources, err := fixture.TestStatusOfResources(to)
+	if err != nil {
+		return nil, err
+	}
+	fixtures = append(fixtures, fixture.TestDeployResources(to), testStatusOfResources)
 
-	return fixtures
+	return fixtures, nil
 }

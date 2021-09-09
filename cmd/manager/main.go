@@ -26,6 +26,7 @@ import (
 	entv1beta1 "github.com/elastic/cloud-on-k8s/pkg/apis/enterprisesearch/v1beta1"
 	kbv1 "github.com/elastic/cloud-on-k8s/pkg/apis/kibana/v1"
 	kbv1beta1 "github.com/elastic/cloud-on-k8s/pkg/apis/kibana/v1beta1"
+	emsv1alpha1 "github.com/elastic/cloud-on-k8s/pkg/apis/maps/v1alpha1"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/agent"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/apmserver"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/association"
@@ -47,6 +48,7 @@ import (
 	"github.com/elastic/cloud-on-k8s/pkg/controller/kibana"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/license"
 	licensetrial "github.com/elastic/cloud-on-k8s/pkg/controller/license/trial"
+	"github.com/elastic/cloud-on-k8s/pkg/controller/maps"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/remoteca"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/webhook"
 	"github.com/elastic/cloud-on-k8s/pkg/dev"
@@ -652,6 +654,7 @@ func registerControllers(mgr manager.Manager, params operator.Parameters, access
 		{name: "License", registerFunc: license.Add},
 		{name: "LicenseTrial", registerFunc: licensetrial.Add},
 		{name: "Agent", registerFunc: agent.Add},
+		{name: "Maps", registerFunc: maps.Add},
 	}
 
 	for _, c := range controllers {
@@ -669,10 +672,16 @@ func registerControllers(mgr manager.Manager, params operator.Parameters, access
 		{name: "APM-ES", registerFunc: associationctl.AddApmES},
 		{name: "APM-KB", registerFunc: associationctl.AddApmKibana},
 		{name: "KB-ES", registerFunc: associationctl.AddKibanaES},
+		{name: "KB-ENT", registerFunc: associationctl.AddKibanaEnt},
 		{name: "ENT-ES", registerFunc: associationctl.AddEntES},
 		{name: "BEAT-ES", registerFunc: associationctl.AddBeatES},
 		{name: "BEAT-KB", registerFunc: associationctl.AddBeatKibana},
 		{name: "AGENT-ES", registerFunc: associationctl.AddAgentES},
+		{name: "AGENT-KB", registerFunc: associationctl.AddAgentKibana},
+		{name: "AGENT-FS", registerFunc: associationctl.AddAgentFleetServer},
+		{name: "EMS-ES", registerFunc: associationctl.AddMapsES},
+		{name: "ES-MONITORING", registerFunc: associationctl.AddEsMonitoring},
+		{name: "KB-MONITORING", registerFunc: associationctl.AddKbMonitoring},
 	}
 
 	for _, c := range assocControllers {
@@ -704,10 +713,11 @@ func garbageCollectUsers(cfg *rest.Config, managedNamespaces []string) {
 	}
 	err = ugc.
 		For(&apmv1.ApmServerList{}, associationctl.ApmAssociationLabelNamespace, associationctl.ApmAssociationLabelName).
-		For(&kbv1.KibanaList{}, associationctl.KibanaESAssociationLabelNamespace, associationctl.KibanaESAssociationLabelName).
+		For(&kbv1.KibanaList{}, associationctl.KibanaAssociationLabelNamespace, associationctl.KibanaAssociationLabelName).
 		For(&entv1.EnterpriseSearchList{}, associationctl.EntESAssociationLabelNamespace, associationctl.EntESAssociationLabelName).
 		For(&beatv1beta1.BeatList{}, associationctl.BeatAssociationLabelNamespace, associationctl.BeatAssociationLabelName).
 		For(&agentv1alpha1.AgentList{}, associationctl.AgentAssociationLabelNamespace, associationctl.AgentAssociationLabelName).
+		For(&emsv1alpha1.ElasticMapsServerList{}, associationctl.MapsESAssociationLabelNamespace, associationctl.MapsESAssociationLabelName).
 		DoGarbageCollection()
 	if err != nil {
 		log.Error(err, "user garbage collector failed")
@@ -723,6 +733,7 @@ func garbageCollectSoftOwnedSecrets(k8sClient k8s.Client) {
 		entv1.Kind:         &entv1.EnterpriseSearch{},
 		beatv1beta1.Kind:   &beatv1beta1.Beat{},
 		agentv1alpha1.Kind: &agentv1alpha1.Agent{},
+		emsv1alpha1.Kind:   &emsv1alpha1.ElasticMapsServer{},
 	}); err != nil {
 		log.Error(err, "Orphan secrets garbage collection failed, will be attempted again at next operator restart.")
 		return
@@ -742,13 +753,20 @@ func setupWebhook(mgr manager.Manager, certRotation certificates.RotationParams,
 			Rotation:   certRotation,
 		}
 
-		// Force a first reconciliation to create the resources before the server is started
-		if err := webhookParams.ReconcileResources(context.Background(), clientset); err != nil {
-			log.Error(err, "unable to setup and fill the webhook certificates")
+		// retrieve the current webhook configuration interface
+		wh, err := webhookParams.NewAdmissionControllerInterface(context.Background(), clientset)
+		if err != nil {
+			log.Error(err, "unable to setup the webhook certificates")
 			os.Exit(1)
 		}
 
-		if err := webhook.Add(mgr, webhookParams, clientset); err != nil {
+		// Force a first reconciliation to create the resources before the server is started
+		if err := webhookParams.ReconcileResources(context.Background(), clientset, wh); err != nil {
+			log.Error(err, "unable to setup the webhook certificates")
+			os.Exit(1)
+		}
+
+		if err := webhook.Add(mgr, webhookParams, clientset, wh); err != nil {
 			log.Error(err, "unable to create controller", "controller", webhook.ControllerName)
 			os.Exit(1)
 		}
@@ -768,6 +786,7 @@ func setupWebhook(mgr manager.Manager, certRotation certificates.RotationParams,
 		&esv1beta1.Elasticsearch{},
 		&kbv1.Kibana{},
 		&kbv1beta1.Kibana{},
+		&emsv1alpha1.ElasticMapsServer{},
 	}
 	for _, obj := range webhookObjects {
 		if err := obj.SetupWebhookWithManager(mgr); err != nil {

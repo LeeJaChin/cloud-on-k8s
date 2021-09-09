@@ -13,6 +13,7 @@ import (
 
 	apmv1 "github.com/elastic/cloud-on-k8s/pkg/apis/apm/v1"
 	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
+	entv1 "github.com/elastic/cloud-on-k8s/pkg/apis/enterprisesearch/v1"
 	kbv1 "github.com/elastic/cloud-on-k8s/pkg/apis/kibana/v1"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 	"github.com/stretchr/testify/assert"
@@ -86,6 +87,16 @@ func TestMemFromJavaOpts(t *testing.T) {
 			expected: resource.MustParse("16777216k"),
 			isErr:    true,
 		},
+		{
+			name:     "with trailing spaces at the end",
+			actual:   "-Xms1k -Xmx8388608k   ",
+			expected: resource.MustParse("16777216Ki"),
+		},
+		{
+			name:     "with trailing space at the beginning",
+			actual:   "  -Xms1k -Xmx8388608k",
+			expected: resource.MustParse("16777216Ki"),
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -143,7 +154,7 @@ func TestAggregator(t *testing.T) {
 
 	val, err := aggregator.AggregateMemory()
 	require.NoError(t, err)
-	require.Equal(t, 324.1705472, inGB(val))
+	require.Equal(t, 349.940350976, inGB(val))
 }
 
 func readObjects(t *testing.T, filePath string) []runtime.Object {
@@ -153,6 +164,7 @@ func readObjects(t *testing.T, filePath string) []runtime.Object {
 	scheme.AddKnownTypes(esv1.GroupVersion, &esv1.Elasticsearch{}, &esv1.ElasticsearchList{})
 	scheme.AddKnownTypes(kbv1.GroupVersion, &kbv1.Kibana{}, &kbv1.KibanaList{})
 	scheme.AddKnownTypes(apmv1.GroupVersion, &apmv1.ApmServer{}, &apmv1.ApmServerList{})
+	scheme.AddKnownTypes(entv1.GroupVersion, &entv1.EnterpriseSearch{}, &entv1.EnterpriseSearchList{})
 	decoder := serializer.NewCodecFactory(scheme).UniversalDeserializer()
 
 	f, err := os.Open(filePath)

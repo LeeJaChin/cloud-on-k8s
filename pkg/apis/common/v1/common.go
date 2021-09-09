@@ -23,6 +23,11 @@ const (
 
 // DeploymentStatus represents status information about a deployment.
 type DeploymentStatus struct {
+	// Selector is the label selector used to find all pods.
+	Selector string `json:"selector,omitempty"`
+	// Count corresponds to Scale.Status.Replicas, which is the actual number of observed instances of the scaled object.
+	// +optional
+	Count int32 `json:"count"`
 	// AvailableNodes is the number of available replicas in the deployment.
 	AvailableNodes int32 `json:"availableNodes,omitempty"`
 	// Version of the stack resource currently running. During version upgrades, multiple versions may run
@@ -49,6 +54,10 @@ type ObjectSelector struct {
 	Name string `json:"name"`
 	// Namespace of the Kubernetes object. If empty, defaults to the current namespace.
 	Namespace string `json:"namespace,omitempty"`
+	// ServiceName is the name of an existing Kubernetes service which is used to make requests to the referenced
+	// object. It has to be in the same namespace as the referenced resource. If left empty, the default HTTP service of
+	// the referenced resource is used.
+	ServiceName string `json:"serviceName,omitempty"`
 }
 
 // WithDefaultNamespace adds a default namespace to a given ObjectSelector if none is set.
@@ -57,8 +66,9 @@ func (o ObjectSelector) WithDefaultNamespace(defaultNamespace string) ObjectSele
 		return o
 	}
 	return ObjectSelector{
-		Namespace: defaultNamespace,
-		Name:      o.Name,
+		Namespace:   defaultNamespace,
+		Name:        o.Name,
+		ServiceName: o.ServiceName,
 	}
 }
 

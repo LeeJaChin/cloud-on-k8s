@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/elastic/cloud-on-k8s/pkg/apis/agent/v1alpha1"
+	agentv1alpha1 "github.com/elastic/cloud-on-k8s/pkg/apis/agent/v1alpha1"
 	apmv1 "github.com/elastic/cloud-on-k8s/pkg/apis/apm/v1"
 	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
 	kbv1 "github.com/elastic/cloud-on-k8s/pkg/apis/kibana/v1"
@@ -156,7 +156,7 @@ func testFetchKibana(t *testing.T) {
 			require.Equal(t, "kb-ns", got.Namespace)
 			require.Equal(t, "test-image", got.Spec.Image)
 			require.EqualValues(t, 1, got.Spec.Count)
-			require.Equal(t, tc.wantAssocConf, got.AssociationConf())
+			require.Equal(t, tc.wantAssocConf, got.EsAssociation().AssociationConf())
 		})
 	}
 }
@@ -175,7 +175,7 @@ func mkKibana(withAnnotations bool) *kbv1.Kibana {
 
 	if withAnnotations {
 		kb.ObjectMeta.Annotations = map[string]string{
-			kb.AssociationConfAnnotationName(): `{"authSecretName":"auth-secret", "authSecretKey":"kb-user", "caSecretName": "ca-secret", "url":"https://es.svc:9300"}`,
+			kb.EsAssociation().AssociationConfAnnotationName(): `{"authSecretName":"auth-secret", "authSecretKey":"kb-user", "caSecretName": "ca-secret", "url":"https://es.svc:9300"}`,
 		}
 		kb.Spec.ElasticsearchRef = commonv1.ObjectSelector{
 			Name:      "es-test",
@@ -360,7 +360,7 @@ func TestUpdateAssociationConf(t *testing.T) {
 	require.Equal(t, "kb-ns", got.Namespace)
 	require.Equal(t, "test-image", got.Spec.Image)
 	require.EqualValues(t, 1, got.Spec.Count)
-	require.Equal(t, assocConf, got.AssociationConf())
+	require.Equal(t, assocConf, got.EsAssociation().AssociationConf())
 
 	// update and check the new values
 	newAssocConf := &commonv1.AssociationConf{
@@ -370,7 +370,7 @@ func TestUpdateAssociationConf(t *testing.T) {
 		URL:            "https://new-es.svc:9300",
 	}
 
-	err = UpdateAssociationConf(client, &got, newAssocConf)
+	err = UpdateAssociationConf(client, got.EsAssociation(), newAssocConf)
 	require.NoError(t, err)
 
 	err = FetchWithAssociations(context.Background(), client, request, &got)
@@ -379,7 +379,7 @@ func TestUpdateAssociationConf(t *testing.T) {
 	require.Equal(t, "kb-ns", got.Namespace)
 	require.Equal(t, "test-image", got.Spec.Image)
 	require.EqualValues(t, 1, got.Spec.Count)
-	require.Equal(t, newAssocConf, got.AssociationConf())
+	require.Equal(t, newAssocConf, got.EsAssociation().AssociationConf())
 }
 
 func TestRemoveAssociationConf(t *testing.T) {
@@ -402,10 +402,10 @@ func TestRemoveAssociationConf(t *testing.T) {
 	require.Equal(t, "kb-ns", got.Namespace)
 	require.Equal(t, "test-image", got.Spec.Image)
 	require.EqualValues(t, 1, got.Spec.Count)
-	require.Equal(t, assocConf, got.AssociationConf())
+	require.Equal(t, assocConf, got.EsAssociation().AssociationConf())
 
 	// remove and check the new values
-	err = RemoveAssociationConf(client, &got)
+	err = RemoveAssociationConf(client, got.EsAssociation())
 	require.NoError(t, err)
 
 	err = FetchWithAssociations(context.Background(), client, request, &got)
@@ -414,7 +414,7 @@ func TestRemoveAssociationConf(t *testing.T) {
 	require.Equal(t, "kb-ns", got.Namespace)
 	require.Equal(t, "test-image", got.Spec.Image)
 	require.EqualValues(t, 1, got.Spec.Count)
-	require.Nil(t, got.AssociationConf())
+	require.Nil(t, got.EsAssociation().AssociationConf())
 }
 
 func TestAllowVersion(t *testing.T) {
@@ -519,8 +519,8 @@ func TestAllowVersion(t *testing.T) {
 }
 
 func TestRemoveObsoleteAssociationConfs(t *testing.T) {
-	withAnnotations := func(annotationNames ...string) *v1alpha1.Agent {
-		result := &v1alpha1.Agent{
+	withAnnotations := func(annotationNames ...string) *agentv1alpha1.Agent {
+		result := &agentv1alpha1.Agent{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        "agent1",
 				Namespace:   "namespace1",
@@ -533,13 +533,13 @@ func TestRemoveObsoleteAssociationConfs(t *testing.T) {
 		return result
 	}
 
-	withRefs := func(agent *v1alpha1.Agent, nsNames ...types.NamespacedName) *v1alpha1.Agent {
+	withRefs := func(agent *agentv1alpha1.Agent, nsNames ...types.NamespacedName) *agentv1alpha1.Agent {
 		for i, nsName := range nsNames {
 			outputName := strconv.Itoa(i)
 			if i == 0 {
 				outputName = "default"
 			}
-			agent.Spec.ElasticsearchRefs = append(agent.Spec.ElasticsearchRefs, v1alpha1.Output{
+			agent.Spec.ElasticsearchRefs = append(agent.Spec.ElasticsearchRefs, agentv1alpha1.Output{
 				ObjectSelector: commonv1.ObjectSelector{Name: nsName.Name, Namespace: nsName.Namespace},
 				OutputName:     outputName,
 			})
@@ -548,9 +548,9 @@ func TestRemoveObsoleteAssociationConfs(t *testing.T) {
 	}
 
 	generateAnnotationName := func(namespace, name string) string {
-		agent := v1alpha1.Agent{
-			Spec: v1alpha1.AgentSpec{
-				ElasticsearchRefs: []v1alpha1.Output{{ObjectSelector: commonv1.ObjectSelector{Name: name, Namespace: namespace}}},
+		agent := agentv1alpha1.Agent{
+			Spec: agentv1alpha1.AgentSpec{
+				ElasticsearchRefs: []agentv1alpha1.Output{{ObjectSelector: commonv1.ObjectSelector{Name: name, Namespace: namespace}}},
 			},
 		}
 		associations := agent.GetAssociations()
@@ -601,7 +601,7 @@ func TestRemoveObsoleteAssociationConfs(t *testing.T) {
 
 			require.NoError(t, RemoveObsoleteAssociationConfs(client, tt.associated, "association.k8s.elastic.co/es-conf"))
 
-			var got v1alpha1.Agent
+			var got agentv1alpha1.Agent
 			require.NoError(t, client.Get(context.Background(), k8s.ExtractNamespacedName(tt.associated), &got))
 
 			gotAnnotations := make([]string, 0)
@@ -610,6 +610,51 @@ func TestRemoveObsoleteAssociationConfs(t *testing.T) {
 			}
 
 			require.ElementsMatch(t, tt.wantedAnnotations, gotAnnotations)
+		})
+	}
+}
+
+func TestGetAssociationOfType(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		associations []commonv1.Association
+		typ          commonv1.AssociationType
+		wantAssoc    commonv1.Association
+		wantError    bool
+	}{
+		{
+			name:         "happy case",
+			associations: []commonv1.Association{&kbv1.KibanaEntAssociation{}, &kbv1.KibanaEsAssociation{}},
+			typ:          commonv1.ElasticsearchAssociationType,
+			wantAssoc:    &kbv1.KibanaEsAssociation{},
+			wantError:    false,
+		},
+		{
+			name:         "no associations",
+			associations: []commonv1.Association{},
+			typ:          commonv1.ElasticsearchAssociationType,
+			wantAssoc:    nil,
+			wantError:    false,
+		},
+		{
+			name:         "no associations found",
+			associations: []commonv1.Association{&kbv1.KibanaEntAssociation{}, &kbv1.KibanaEsAssociation{}},
+			typ:          commonv1.FleetServerAssociationType,
+			wantAssoc:    nil,
+			wantError:    false,
+		},
+		{
+			name:         "two associations of the same type",
+			associations: []commonv1.Association{&agentv1alpha1.AgentESAssociation{}, &agentv1alpha1.AgentESAssociation{}},
+			typ:          commonv1.ElasticsearchAssociationType,
+			wantAssoc:    nil,
+			wantError:    true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			gotAssoc, err := SingleAssociationOfType(tt.associations, tt.typ)
+			require.Equal(t, tt.wantAssoc, gotAssoc)
+			require.Equal(t, tt.wantError, err != nil)
 		})
 	}
 }

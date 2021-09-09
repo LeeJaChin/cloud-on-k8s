@@ -7,7 +7,7 @@ endif::[]
 [id="{p}-{page_id}"]
 = Manage compute resources
 
-To help the Kubernetes scheduler correctly place Pods in available Kubernetes nodes and ensure quality of service (QoS), it is recommended to specify the CPU and memory requirements for objects managed by the operator (Elasticsearch, Kibana or APM Server). In Kubernetes, `requests` defines the minimum amount of resources that must be available for a Pod to be scheduled; `limits` defines the maximum amount of resources that a Pod is allowed to consume. For more information about how Kubernetes uses these concepts, see: https://kubernetes.io/docs/concepts/configuration/manage-compute-resources-container/[Managing Compute Resources for Containers].
+To help the Kubernetes scheduler correctly place Pods in available Kubernetes nodes and ensure quality of service (QoS), it is recommended to specify the CPU and memory requirements for objects managed by the operator ({eck_resources_list}). In Kubernetes, `requests` defines the minimum amount of resources that must be available for a Pod to be scheduled; `limits` defines the maximum amount of resources that a Pod is allowed to consume. For more information about how Kubernetes uses these concepts, see: https://kubernetes.io/docs/concepts/configuration/manage-compute-resources-container/[Managing Compute Resources for Containers].
 
 [float]
 [id="{p}-compute-resources"]
@@ -64,7 +64,7 @@ spec:
 
 [float]
 [id="{p}-compute-resources-kibana-and-apm"]
-=== Set compute resources for Kibana and APM Server
+=== Set compute resources for Kibana, Enterprise Search, Elastic Maps Server and APM Server
 
 .Kibana
 [source,yaml,subs="attributes"]
@@ -91,6 +91,30 @@ spec:
             cpu: 2
 ----
 
+.Elastic Maps Server
+[source,yaml,subs="attributes"]
+----
+apiVersion: maps.k8s.elastic.co/v1alpha1
+kind: ElasticMapsServer
+metadata:
+  name: quickstart
+spec:
+  version: {version}
+  podTemplate:
+    spec:
+      containers:
+      - name: maps
+        env:
+          - name: NODE_OPTIONS
+            value: "--max-old-space-size=980"
+        resources:
+          requests:
+            memory: 1Gi
+            cpu: 1
+          limits:
+            memory: 1Gi
+            cpu: 1
+----
 .APM Server
 [source,yaml,subs="attributes"]
 ----
@@ -112,8 +136,32 @@ spec:
             memory: 2Gi
             cpu: 2
 ----
+.Enterprise Search
+[source,yaml,subs="attributes"]
+----
+apiVersion: enterprisesearch.k8s.elastic.co/{eck_crd_version}
+kind: EnterpriseSearch
+metadata:
+  name: enterprise-search-quickstart
+spec:
+  version: {version}
+  podTemplate:
+    spec:
+      containers:
+      - name: enterprise-search
+        resources:
+          requests:
+            memory: 4Gi
+            cpu: 1
+          limits:
+            memory: 4Gi
+            cpu: 2
+        env:
+        - name: JAVA_OPTS
+          value: -Xms3500m -Xmx3500m
+----
 
-For the container name, you can use `apm-server` or `kibana` as appropriate.
+For the container name, use `apm-server`, `maps`,  `kibana` or `enterprise-search`, respectively.
 
 [float]
 [id="{p}-compute-resources-beats-agent"]
@@ -185,8 +233,10 @@ If `resources` is not defined in the specification of an object, then the operat
 |APM Server |512Mi |512Mi
 |Elasticsearch |2Gi |2Gi
 |Kibana |1Gi |1Gi
-|Beat   |200Mi | 200Mi
-|Elastic Agent | 200Mi|200Mi
+|Beat   |200Mi |200Mi
+|Elastic Agent |350Mi |350Mi
+|Elastic Maps Sever |200Mi |200Mi
+|Enterprise Search |4Gi |4Gi
 |===
 
 If the Kubernetes cluster is configured with https://kubernetes.io/docs/tasks/administer-cluster/manage-resources/memory-default-namespace/[LimitRanges] that enforce a minimum memory constraint, they could interfere with the operator defaults and cause object creation to fail.

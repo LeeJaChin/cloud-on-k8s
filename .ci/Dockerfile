@@ -1,10 +1,10 @@
 # Docker image used for continuous integration
-FROM golang:1.16.2
+FROM golang:1.17.0
 
 ENV GOLANGCILINT_VERSION=1.38.0
 ENV SHELLCHECK_VERSION=0.7.1
 ENV KUBEBUILDER_VERSION=2.3.1
-ENV GCLOUD_VERSION=297.0.1
+ENV GCLOUD_VERSION=353.0.0
 ENV KUBECTL_VERSION=1.14.7
 ENV DOCKER_VERSION=19.03.13
 ENV DOCKER_BUILDX_VERSION=0.4.2
@@ -30,7 +30,7 @@ ENV PATH=${PATH}:/usr/local/google-cloud-sdk/bin
 RUN curl -fsSLO https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-${GCLOUD_VERSION}-linux-x86_64.tar.gz && \
     mkdir -p /usr/local/gcloud && \
     tar -zxf google-cloud-sdk-${GCLOUD_VERSION}-linux-x86_64.tar.gz -C /usr/local && \
-    /usr/local/google-cloud-sdk/install.sh && \
+    /usr/local/google-cloud-sdk/install.sh --quiet && \
     gcloud config set core/disable_usage_reporting true && \
     gcloud config set component_manager/disable_update_check true && \
     gcloud components install beta --quiet && \
@@ -84,16 +84,6 @@ RUN curl -fsSLO https://github.com/kubernetes-sigs/kind/releases/download/v${KIN
 
 RUN curl -fsSLO https://github.com/kubernetes-sigs/kind/releases/download/v${KIND_VERSION_0_9}/kind-linux-amd64 && \
     mv kind-linux-amd64 /usr/local/bin/kind-${KIND_VERSION_0_9} && chmod +x /usr/local/bin/kind-${KIND_VERSION_0_9}
-
-# OpenShift installer and CLI to provision OCP clusters
-RUN curl -fsSLO https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OPENSHIFT_TOOLS_VERSION}/openshift-install-linux-${OPENSHIFT_TOOLS_VERSION}.tar.gz && \
-    tar -zxf openshift-install-linux-${OPENSHIFT_TOOLS_VERSION}.tar.gz openshift-install && \
-    mv openshift-install /usr/local/bin/openshift-install && \
-    rm openshift-install-linux-${OPENSHIFT_TOOLS_VERSION}.tar.gz && \
-    curl -fsSLO https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OPENSHIFT_TOOLS_VERSION}/openshift-client-linux-${OPENSHIFT_TOOLS_VERSION}.tar.gz && \
-    tar -zxf openshift-client-linux-${OPENSHIFT_TOOLS_VERSION}.tar.gz oc && \
-    mv oc /usr/local/bin/oc && \
-    rm openshift-client-linux-${OPENSHIFT_TOOLS_VERSION}.tar.gz
 
 RUN curl -fsSLO "https://github.com/weaveworks/eksctl/releases/download/${EKSCTL_VERSION}/eksctl_Linux_amd64.tar.gz" && \
     tar xzf eksctl_Linux_amd64.tar.gz && \

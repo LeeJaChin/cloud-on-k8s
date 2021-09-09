@@ -26,7 +26,6 @@ import (
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/certificates"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/operator"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/watches"
-	entName "github.com/elastic/cloud-on-k8s/pkg/controller/enterprisesearch/name"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 )
 
@@ -78,7 +77,7 @@ func TestReconcileEnterpriseSearch_Reconcile_SetControllerVersion(t *testing.T) 
 		Parameters: operator.Parameters{
 			OperatorInfo: about.OperatorInfo{
 				BuildInfo: about.BuildInfo{
-					Version: "operator-version",
+					Version: "1.7.0",
 				},
 			},
 		},
@@ -90,7 +89,7 @@ func TestReconcileEnterpriseSearch_Reconcile_SetControllerVersion(t *testing.T) 
 	var updated entv1.EnterpriseSearch
 	err = r.Client.Get(context.Background(), k8s.ExtractNamespacedName(&sample), &updated)
 	require.NoError(t, err)
-	require.Equal(t, map[string]string{annotation.ControllerVersionAnnotation: "operator-version"}, updated.Annotations)
+	require.Equal(t, map[string]string{annotation.ControllerVersionAnnotation: "1.7.0"}, updated.Annotations)
 }
 
 func TestReconcileEnterpriseSearch_Reconcile_AssociationNotConfigured(t *testing.T) {
@@ -151,7 +150,7 @@ func TestReconcileEnterpriseSearch_Reconcile_Create_Update_Resources(t *testing.
 	checkResources := func() {
 		// should create a service
 		var service corev1.Service
-		err := r.Client.Get(context.Background(), types.NamespacedName{Namespace: "ns", Name: entName.HTTPService(sample.Name)}, &service)
+		err := r.Client.Get(context.Background(), types.NamespacedName{Namespace: "ns", Name: HTTPServiceName(sample.Name)}, &service)
 		require.NoError(t, err)
 		require.Equal(t, int32(3002), service.Spec.Ports[0].Port)
 
@@ -211,7 +210,7 @@ func TestReconcileEnterpriseSearch_Reconcile_Create_Update_Resources(t *testing.
 	require.NoError(t, err)
 	// delete the http service
 	var service corev1.Service
-	err = r.Client.Get(context.Background(), types.NamespacedName{Namespace: "ns", Name: entName.HTTPService(sample.Name)}, &service)
+	err = r.Client.Get(context.Background(), types.NamespacedName{Namespace: "ns", Name: HTTPServiceName(sample.Name)}, &service)
 	require.NoError(t, err)
 	err = r.Client.Delete(context.Background(), &service)
 	require.NoError(t, err)
@@ -266,7 +265,7 @@ func TestReconcileEnterpriseSearch_doReconcile_AssociationDelaysVersionUpgrade(t
 	require.NoError(t, err)
 	// the Enterprise Search deployment should be created and specify version 7.7.0
 	var dep appsv1.Deployment
-	err = r.Client.Get(context.Background(), types.NamespacedName{Namespace: "ns", Name: entName.Deployment(ent.Name)}, &dep)
+	err = r.Client.Get(context.Background(), types.NamespacedName{Namespace: "ns", Name: DeploymentName(ent.Name)}, &dep)
 	require.NoError(t, err)
 	require.Equal(t, "7.7.0", dep.Spec.Template.Labels[VersionLabelName])
 	// retrieve the updated ent resource
@@ -279,7 +278,7 @@ func TestReconcileEnterpriseSearch_doReconcile_AssociationDelaysVersionUpgrade(t
 	require.NoError(t, err)
 	_, err = r.doReconcile(context.Background(), ent)
 	require.NoError(t, err)
-	err = r.Client.Get(context.Background(), types.NamespacedName{Namespace: "ns", Name: entName.Deployment(ent.Name)}, &dep)
+	err = r.Client.Get(context.Background(), types.NamespacedName{Namespace: "ns", Name: DeploymentName(ent.Name)}, &dep)
 	require.NoError(t, err)
 	require.Equal(t, "7.7.0", dep.Spec.Template.Labels[VersionLabelName])
 	// retrieve the updated ent resource
@@ -291,7 +290,7 @@ func TestReconcileEnterpriseSearch_doReconcile_AssociationDelaysVersionUpgrade(t
 	ent.SetAssociationConf(assocConf)
 	_, err = r.doReconcile(context.Background(), ent)
 	require.NoError(t, err)
-	err = r.Client.Get(context.Background(), types.NamespacedName{Namespace: "ns", Name: entName.Deployment(ent.Name)}, &dep)
+	err = r.Client.Get(context.Background(), types.NamespacedName{Namespace: "ns", Name: DeploymentName(ent.Name)}, &dep)
 	require.NoError(t, err)
 	require.Equal(t, "7.8.0", dep.Spec.Template.Labels[VersionLabelName])
 	// retrieve the updated ent resource
@@ -304,7 +303,7 @@ func TestReconcileEnterpriseSearch_doReconcile_AssociationDelaysVersionUpgrade(t
 	require.NoError(t, err)
 	_, err = r.doReconcile(context.Background(), ent)
 	require.NoError(t, err)
-	err = r.Client.Get(context.Background(), types.NamespacedName{Namespace: "ns", Name: entName.Deployment(ent.Name)}, &dep)
+	err = r.Client.Get(context.Background(), types.NamespacedName{Namespace: "ns", Name: DeploymentName(ent.Name)}, &dep)
 	require.NoError(t, err)
 	require.Equal(t, "7.8.1", dep.Spec.Template.Labels[VersionLabelName])
 }
@@ -558,7 +557,7 @@ func Test_buildConfigHash(t *testing.T) {
 		},
 	}
 	tlsCertsSecret := corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Namespace: ent.Namespace, Name: certificates.InternalCertsSecretName(entName.EntNamer, ent.Name)},
+		ObjectMeta: metav1.ObjectMeta{Namespace: ent.Namespace, Name: certificates.InternalCertsSecretName(entv1.Namer, ent.Name)},
 		Data: map[string][]byte{
 			certificates.CertFileName: []byte("cert-data"),
 		},

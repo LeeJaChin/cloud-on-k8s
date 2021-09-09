@@ -62,7 +62,7 @@ pipeline {
                                 channel: '#cloud-k8s',
                                 color: 'good',
                                 message: "`${TAG_NAME}` was released \r\n" +
-                                    "https://download.elastic.co/downloads/eck/${TAG_NAME}/all-in-one.yaml was uploaded \r\n" +
+                                    "Manifests were uploaded to https://download.elastic.co/downloads/eck/${TAG_NAME}\r\n" +
                                     "Congratulations!",
                                 tokenCredentialId: 'cloud-ci-slack-integration-token'
                             )
@@ -106,11 +106,22 @@ pipeline {
                     ],
                     wait: false
 
+                // test the latest version of OCP on every build
                 build job: 'cloud-on-k8s-e2e-tests-ocp',
+                    parameters: [
+                        string(name: 'JKS_PARAM_OPERATOR_IMAGE', value: operatorImage),
+                        string(name: 'OCP_VERSION', value: "4.8.10"),
+                        string(name: 'branch_specifier', value: GIT_COMMIT)
+                    ],
+                    wait: false
+
+                // schedule another job for all the older 4.x OCP versions which runs only on Fridays (via when directive in job)
+                build job: 'cloud-on-k8s-e2e-tests-ocp-all-but-latest',
                     parameters: [
                         string(name: 'JKS_PARAM_OPERATOR_IMAGE', value: operatorImage),
                         string(name: 'branch_specifier', value: GIT_COMMIT)
                     ],
+                    quietPeriod: 86400, // add a 24 hour delay to this job to run it over the weekend
                     wait: false
 
                 build job: 'cloud-on-k8s-e2e-tests-eks',

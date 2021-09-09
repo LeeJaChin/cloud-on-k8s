@@ -352,6 +352,7 @@ func (h *helper) renderManifestFromHelm(valuesFile, namespace string, installCRD
 	cmd := command.New("hack/manifest-gen/manifest-gen.sh",
 		"-g",
 		"-n", namespace,
+		fmt.Sprintf("--set=global.kubeVersion=%s", h.testContext.KubernetesVersion),
 		fmt.Sprintf("--set=installCRDs=%t", installCRDs),
 		fmt.Sprintf("--values=%s", values),
 	).Build()
@@ -370,7 +371,7 @@ func (h *helper) renderManifestFromHelm(valuesFile, namespace string, installCRD
 
 func (h *helper) installCRDs() error {
 	log.Info("Installing CRDs")
-	_, err := h.kubectl("apply", "-f", "config/crds/all-crds.yaml")
+	_, err := h.kubectl("apply", "-f", "config/crds/v1/all-crds.yaml")
 	return err
 }
 
@@ -394,7 +395,7 @@ func (h *helper) createManagedNamespaces() error {
 	if h.testContext.Ocp3Cluster {
 		log.Info("Resetting namespace node selector")
 		for _, ns := range h.testContext.Operator.ManagedNamespaces {
-			if err := exec.Command("oc", "annotate", "namespace", ns, "openshift.io/node-selector=").Run(); err != nil {
+			if err := exec.Command("kubectl", "annotate", "--overwrite", "namespace", ns, "openshift.io/node-selector=").Run(); err != nil {
 				return err
 			}
 		}

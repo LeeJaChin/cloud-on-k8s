@@ -7,7 +7,6 @@ package certificates
 import (
 	"context"
 	cryptorand "crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"net"
@@ -53,12 +52,8 @@ func (r Reconciler) ReconcilePublicHTTPCerts(internalCerts *CertificatesSecret) 
 }
 
 // ReconcileInternalHTTPCerts reconciles the internal resources for the HTTP certificate.
-func (r Reconciler) ReconcileInternalHTTPCerts(ca *CA) (*CertificatesSecret, error) {
+func (r Reconciler) ReconcileInternalHTTPCerts(ca *CA, customCertificates *CertificatesSecret) (*CertificatesSecret, error) {
 	ownerNSN := k8s.ExtractNamespacedName(r.Owner)
-	customCertificates, err := getCustomCertificates(r.K8sClient, ownerNSN, r.TLSOptions)
-	if err != nil {
-		return nil, err
-	}
 
 	watchKey := CertificateWatchKey(r.Namer, ownerNSN.Name)
 	if err := ReconcileCustomCertWatch(r.DynamicWatches, watchKey, ownerNSN, r.TLSOptions.Certificate); err != nil {
@@ -106,10 +101,7 @@ func (r Reconciler) ReconcileInternalHTTPCerts(ca *CA) (*CertificatesSecret, err
 	// by default let's assume that the CA is provided, either by the ECK internal certificate authority or by the user
 	caCertProvided := true
 	//nolint:nestif
-	if customCertificates != nil {
-		if err := customCertificates.Validate(); err != nil {
-			return nil, err
-		}
+	if customCertificates.HasLeafCertificate() {
 		expectedSecretData := make(map[string][]byte)
 		expectedSecretData[CertFileName] = customCertificates.CertPem()
 		expectedSecretData[KeyFileName] = customCertificates.KeyPem()
@@ -159,7 +151,7 @@ func (r Reconciler) ReconcileInternalHTTPCerts(ca *CA) (*CertificatesSecret, err
 		delete(secret.Data, CAFileName)
 	}
 
-	internalCerts := CertificatesSecret(secret)
+	internalCerts := CertificatesSecret{Secret: secret}
 	return &internalCerts, nil
 }
 
@@ -179,29 +171,22 @@ func ensureInternalSelfSignedCertificateSecretContents(
 ) (bool, error) {
 	secretWasChanged := false
 
-	// verify that the secret contains a parsable private key, create if it does not exist
-	var privateKey *rsa.PrivateKey
-	needsNewPrivateKey := true //nolint:ifshort
-	if privateKeyData, ok := secret.Data[KeyFileName]; ok {
-		storedPrivateKey, err := ParsePEMPrivateKey(privateKeyData)
-		if err != nil {
-			log.Error(err, "Unable to parse stored private key", "namespace", secret.Namespace, "secret_name", secret.Name)
-		} else {
-			needsNewPrivateKey = false
-			privateKey = storedPrivateKey
-		}
-	}
+	// verify that the secret contains a parsable and compatible private key
+	privateKey := GetCompatiblePrivateKey(ca.PrivateKey, secret, KeyFileName)
 
 	// if we need a new private key, generate it
-	if needsNewPrivateKey {
-		generatedPrivateKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)
+	if privateKey == nil {
+		generatedPrivateKey, err := NewPrivateKey(ca.PrivateKey)
 		if err != nil {
-			return secretWasChanged, err
+			return false, err
 		}
-
+		encodedPEM, err := EncodePEMPrivateKey(generatedPrivateKey)
+		if err != nil {
+			return false, err
+		}
+		secret.Data[KeyFileName] = encodedPEM
 		privateKey = generatedPrivateKey
 		secretWasChanged = true
-		secret.Data[KeyFileName] = EncodePEMPrivateKey(*privateKey)
 	}
 
 	// check if the existing cert should be re-issued

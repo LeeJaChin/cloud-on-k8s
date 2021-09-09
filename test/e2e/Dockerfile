@@ -1,12 +1,12 @@
 # Docker image for the E2E tests runner
-FROM --platform=$TARGETPLATFORM golang:1.16.2
+FROM --platform=$TARGETPLATFORM golang:1.17.0
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
 ARG E2E_JSON
 ENV E2E_JSON $E2E_JSON
-ARG GO_TAGS
-ENV GO_TAGS $GO_TAGS
+ARG E2E_TAGS
+ENV E2E_TAGS $E2E_TAGS
 
 WORKDIR /go/src/github.com/elastic/cloud-on-k8s
 
@@ -25,6 +25,6 @@ COPY test/ test/
 RUN chgrp -R 0 /go && chmod -R g=u /go
 
 # If a restricted PSP is applied we can't run as root
-USER 101
+USER 1001
 
 ENTRYPOINT ["test/e2e/run.sh"]

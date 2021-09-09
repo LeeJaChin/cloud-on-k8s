@@ -17,6 +17,7 @@ import (
 	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
 	entv1 "github.com/elastic/cloud-on-k8s/pkg/apis/enterprisesearch/v1"
 	kbv1 "github.com/elastic/cloud-on-k8s/pkg/apis/kibana/v1"
+	mapsv1alpha1 "github.com/elastic/cloud-on-k8s/pkg/apis/maps/v1alpha1"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/kibana"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 	"github.com/stretchr/testify/require"
@@ -154,6 +155,21 @@ func TestNewReporter(t *testing.T) {
 				AvailableNodes: 6,
 			},
 		},
+		&esv1.Elasticsearch{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "ns1",
+				Name:      "monitored",
+			},
+			Spec: esv1.ElasticsearchSpec{
+				Monitoring: esv1.Monitoring{
+					Logs:    esv1.LogsMonitoring{ElasticsearchRefs: []commonv1.ObjectSelector{{Name: "monitoring"}}},
+					Metrics: esv1.MetricsMonitoring{ElasticsearchRefs: []commonv1.ObjectSelector{{Name: "monitoring"}}},
+				},
+			},
+			Status: esv1.ElasticsearchStatus{
+				AvailableNodes: 1,
+			},
+		},
 		&apmv1.ApmServer{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "ns1",
@@ -231,6 +247,42 @@ func TestNewReporter(t *testing.T) {
 				AvailableNodes: 6,
 			},
 		},
+		&agentv1alpha1.Agent{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "agent3",
+				Namespace: "ns2",
+			},
+			Spec: agentv1alpha1.AgentSpec{
+				FleetServerEnabled: true,
+				Mode:               agentv1alpha1.AgentFleetMode,
+			},
+			Status: agentv1alpha1.AgentStatus{
+				AvailableNodes: 3,
+			},
+		},
+		&agentv1alpha1.Agent{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "agent4",
+				Namespace: "ns2",
+			},
+			Spec: agentv1alpha1.AgentSpec{
+				Mode: agentv1alpha1.AgentFleetMode,
+			},
+			Status: agentv1alpha1.AgentStatus{
+				AvailableNodes: 5,
+			},
+		},
+		&mapsv1alpha1.ElasticMapsServer{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "maps1",
+				Namespace: "ns1",
+			},
+			Status: mapsv1alpha1.MapsStatus{
+				DeploymentStatus: commonv1.DeploymentStatus{
+					AvailableNodes: 1,
+				},
+			},
+		},
 		&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "elastic-licensing",
@@ -265,9 +317,11 @@ func TestNewReporter(t *testing.T) {
   operator_uuid: 15039433-f873-41bd-b6e7-10ee3665cafa
   stats:
     agents:
+      fleet_mode: 2
+      fleet_server: 1
       multiple_refs: 1
-      pod_count: 16
-      resource_count: 2
+      pod_count: 24
+      resource_count: 4
     apms:
       pod_count: 2
       resource_count: 1
@@ -282,14 +336,19 @@ func TestNewReporter(t *testing.T) {
       resource_count: 2
     elasticsearches:
       autoscaled_resource_count: 1
-      pod_count: 9
-      resource_count: 2
+      pod_count: 10
+      resource_count: 3
+      stack_monitoring_logs_count: 1
+      stack_monitoring_metrics_count: 1
     enterprisesearches:
       pod_count: 3
       resource_count: 1
     kibanas:
       pod_count: 0
       resource_count: 2
+    maps:
+      pod_count: 1
+      resource_count: 1
 `),
 	}
 
