@@ -1,11 +1,13 @@
 // Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
-// or more contributor license agreements. Licensed under the Elastic License;
-// you may not use this file except in compliance with the Elastic License.
+// or more contributor license agreements. Licensed under the Elastic License 2.0;
+// you may not use this file except in compliance with the Elastic License 2.0.
 
 package reconcile
 
 import (
 	"reflect"
+
+	corev1 "k8s.io/api/core/v1"
 
 	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/events"
@@ -14,7 +16,6 @@ import (
 	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/observer"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 	ulog "github.com/elastic/cloud-on-k8s/pkg/utils/log"
-	corev1 "k8s.io/api/core/v1"
 )
 
 var log = ulog.Log.WithName("elasticsearch-controller")
@@ -152,4 +153,8 @@ func (s *State) Apply() ([]events.Event, *esv1.Elasticsearch) {
 func (s *State) UpdateElasticsearchInvalid(err error) {
 	s.status.Phase = esv1.ElasticsearchResourceInvalid
 	s.AddEvent(corev1.EventTypeWarning, events.EventReasonValidation, err.Error())
+}
+
+func (s *State) UpdateElasticsearchStatusPhase(orchPhase esv1.ElasticsearchOrchestrationPhase) {
+	s.status.Phase = orchPhase
 }

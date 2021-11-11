@@ -1,6 +1,6 @@
 // Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
-// or more contributor license agreements. Licensed under the Elastic License;
-// you may not use this file except in compliance with the Elastic License.
+// or more contributor license agreements. Licensed under the Elastic License 2.0;
+// you may not use this file except in compliance with the Elastic License 2.0.
 
 package run
 
@@ -21,16 +21,17 @@ import (
 	"time"
 
 	sprig "github.com/Masterminds/sprig/v3"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/retry"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/command"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	"github.com/elastic/cloud-on-k8s/pkg/utils/retry"
+	"github.com/elastic/cloud-on-k8s/test/e2e/test"
+	"github.com/elastic/cloud-on-k8s/test/e2e/test/command"
 )
 
 const (
@@ -260,11 +261,9 @@ func (h *helper) initTestSecrets() error {
 		}
 
 		monitoringSecrets := struct {
-			MonitoringIP   string `json:"monitoring_ip"`
+			MonitoringURL  string `json:"monitoring_url"`
 			MonitoringUser string `json:"monitoring_user"`
 			MonitoringPass string `json:"monitoring_pass"`
-			MonitoringCA   string `json:"monitoring_ca"`
-			APMServerCert  string `json:"apm_server_cert"`
 			APMSecretToken string `json:"apm_secret_token"`
 			APMServerURL   string `json:"apm_server_url"`
 		}{}
@@ -273,13 +272,11 @@ func (h *helper) initTestSecrets() error {
 			return fmt.Errorf("unmarshal %v, %w", h.monitoringSecrets, err)
 		}
 
-		h.testSecrets["monitoring_ip"] = monitoringSecrets.MonitoringIP
+		h.testSecrets["monitoring_url"] = monitoringSecrets.MonitoringURL
 		h.testSecrets["monitoring_user"] = monitoringSecrets.MonitoringUser
 		h.testSecrets["monitoring_pass"] = monitoringSecrets.MonitoringPass
-		h.testSecrets["monitoring_ca"] = monitoringSecrets.MonitoringCA
 
 		h.operatorSecrets = map[string]string{}
-		h.operatorSecrets["apm_server_cert"] = monitoringSecrets.APMServerCert
 		h.operatorSecrets["apm_secret_token"] = monitoringSecrets.APMSecretToken
 		h.operatorSecrets["apm_server_url"] = monitoringSecrets.APMServerURL
 	}
@@ -514,8 +511,7 @@ func (h *helper) runTestsRemote() error {
 
 	if err != nil {
 		h.dumpEventLog()
-		h.dumpK8sData()
-		h.runEsDiagnosticsJob()
+		h.runECKDiagnostics()
 		return errors.Wrap(err, "test run failed")
 	}
 
@@ -811,11 +807,13 @@ func (h *helper) dumpEventLog() {
 	}
 }
 
-func (h *helper) dumpK8sData() {
+func (h *helper) runECKDiagnostics() {
 	operatorNS := h.testContext.Operator.Namespace
 	otherNS := append([]string{h.testContext.E2ENamespace}, h.testContext.Operator.ManagedNamespaces...)
-	cmd := exec.Command("support/diagnostics/eck-dump.sh", "-N", operatorNS, "-n", strings.Join(otherNS, ","), "-o", h.testContext.TestRun, "-z")
+	cmd := exec.Command("eck-diagnostics", "-o", operatorNS, "-r", strings.Join(otherNS, ","))
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		log.Error(err, "Failed to run support/diagnostics/eck-dump.sh")
+		log.Error(err, "Failed to run eck-diagnostics")
 	}
 }

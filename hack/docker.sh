@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 
 # Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
-# or more contributor license agreements. Licensed under the Elastic License;
-# you may not use this file except in compliance with the Elastic License.
+# or more contributor license agreements. Licensed under the Elastic License 2.0;
+# you may not use this file except in compliance with the Elastic License 2.0.
 
 # Script to handle exoticisms related to 'docker login' and 'docker push'.
 #
 # Log in to docker.elastic.co if the namespace eck, eck-ci or eck-snapshots is used
 # Log in to gcloud if GCR is used
+# Log in to hub.docker.com if docker.io is used
 
 set -euo pipefail
 
@@ -28,7 +29,7 @@ docker-login() {
 
     case "$image" in
 
-        */eck/*|*/eck-ci/*|*/eck-snapshots/*)
+        docker.elastic.co/*)
             echo "Authentication to ${registry}..."
             docker login -u "${DOCKER_LOGIN}" -p "${DOCKER_PASSWORD}" docker.elastic.co 2> /dev/null
         ;;
@@ -36,6 +37,11 @@ docker-login() {
         *.gcr.io/*)
             echo "Authentication to ${registry}..."
             gcloud auth configure-docker --quiet 2> /dev/null
+        ;;
+
+        docker.io/*)
+            echo "Authentication to ${registry}..."
+            docker login -u "${DOCKERHUB_LOGIN}" -p "${DOCKERHUB_PASSWORD}" 2> /dev/null
         ;;
 
         *)

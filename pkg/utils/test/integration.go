@@ -1,6 +1,6 @@
 // Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
-// or more contributor license agreements. Licensed under the Elastic License;
-// you may not use this file except in compliance with the Elastic License.
+// or more contributor license agreements. Licensed under the Elastic License 2.0;
+// you may not use this file except in compliance with the Elastic License 2.0.
 
 package test
 
@@ -27,7 +27,9 @@ const (
 	// It is set at a relatively high value due to low resources in continuous integration.
 	ControlPlaneStartTimeout = 1 * time.Minute
 	BootstrapTestEnvRetries  = 1
-	CRDsRelativePath         = "../../../config/crds/v1"
+
+	// CRDsRelativePath kubebuilder 2.3.1 comes with a 1.15 control plane
+	CRDsRelativePath = "../../../config/crds/v1beta1"
 )
 
 var Config *rest.Config

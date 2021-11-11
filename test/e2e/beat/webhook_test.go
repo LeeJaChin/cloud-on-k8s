@@ -1,6 +1,6 @@
 // Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
-// or more contributor license agreements. Licensed under the Elastic License;
-// you may not use this file except in compliance with the Elastic License.
+// or more contributor license agreements. Licensed under the Elastic License 2.0;
+// you may not use this file except in compliance with the Elastic License 2.0.
 
 // +build beat e2e
 
@@ -17,6 +17,11 @@ import (
 )
 
 func TestWebhook(t *testing.T) {
+	// Skip on OCP3 where admission controller is not enabled by default.
+	if test.Ctx().Provider == "ocp3" {
+		t.SkipNow()
+	}
+
 	beat := beatv1beta1.Beat{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-webhook",

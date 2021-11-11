@@ -1,6 +1,6 @@
 // Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
-// or more contributor license agreements. Licensed under the Elastic License;
-// you may not use this file except in compliance with the Elastic License.
+// or more contributor license agreements. Licensed under the Elastic License 2.0;
+// you may not use this file except in compliance with the Elastic License 2.0.
 
 package checks
 
@@ -12,12 +12,13 @@ import (
 	"net/http"
 	"strconv"
 
+	"k8s.io/apimachinery/pkg/types"
+
 	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
 	esClient "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 	"github.com/elastic/cloud-on-k8s/test/e2e/test"
 	"github.com/elastic/cloud-on-k8s/test/e2e/test/elasticsearch"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 type Monitored interface {
@@ -156,7 +157,7 @@ func containsDocuments(esClient esClient.Client, indexPattern string) error {
 
 	// 1 index must exist
 	if len(indices) != 1 {
-		return fmt.Errorf("expected [%d] index [%s], found [%d]", len(indices), indexPattern, 1)
+		return fmt.Errorf("expected [%d] index [%s], found [%d]", 1, indexPattern, len(indices))
 	}
 	docsCount, err := strconv.Atoi(indices[0].DocsCount)
 	if err != nil {
