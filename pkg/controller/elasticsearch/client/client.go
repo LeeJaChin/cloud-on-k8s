@@ -12,13 +12,14 @@ import (
 	"net/http"
 	"time"
 
+	"go.elastic.co/apm/module/apmelasticsearch/v2"
 	"k8s.io/apimachinery/pkg/types"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/annotation"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/net"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/annotation"
+	commonhttp "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/http"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/net"
 )
 
 const (
@@ -36,8 +37,9 @@ type BasicAuth struct {
 }
 
 type IndexRole struct {
-	Names      []string `json:"names,omitempty"`
-	Privileges []string `json:",omitempty"`
+	Names                  []string `json:"names,omitempty"`
+	Privileges             []string `json:",omitempty"`
+	AllowRestrictedIndices *bool    `json:"allow_restricted_indices,omitempty" yaml:"allow_restricted_indices,omitempty"`
 }
 
 type ApplicationRole struct {
@@ -57,8 +59,10 @@ type Role struct {
 type Client interface {
 	AllocationSetter
 	AutoscalingClient
+	DesiredNodesClient
 	ShardLister
 	LicenseClient
+	SecurityClient
 	// Close idle connections in the underlying http client.
 	Close()
 	// Equal returns true if other can be considered as the same client.
@@ -71,7 +75,9 @@ type Client interface {
 	DisableReplicaShardsAllocation(ctx context.Context) error
 	// EnableShardAllocation enables shards allocation on the cluster.
 	EnableShardAllocation(ctx context.Context) error
-	//nolint:gocritic
+	// RemoveTransientAllocationSettings removes allocation filters and enablement settings.
+	RemoveTransientAllocationSettings(ctx context.Context) error
+
 	// SyncedFlush requests a synced flush on the cluster. Deprecated in 7.6, removed in 8.0.
 	// This is "best-effort", see https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-synced-flush.html.
 	SyncedFlush(ctx context.Context) error
@@ -81,6 +87,8 @@ type Client interface {
 	GetClusterHealth(ctx context.Context) (Health, error)
 	// GetClusterHealthWaitForAllEvents calls _cluster/health?wait_for_events=languid&timeout=0s
 	GetClusterHealthWaitForAllEvents(ctx context.Context) (Health, error)
+	// GetClusterState calls the _cluster/state api.
+	GetClusterState(ctx context.Context) (ClusterState, error)
 	// SetMinimumMasterNodes sets the transient and persistent setting of the same name in cluster settings.
 	SetMinimumMasterNodes(ctx context.Context, n int) error
 	// ReloadSecureSettings will decrypt and re-read the entire keystore, on every cluster node,
@@ -103,15 +111,31 @@ type Client interface {
 	//
 	// Introduced in: Elasticsearch 7.0.0
 	DeleteVotingConfigExclusions(ctx context.Context, waitForRemoval bool) error
+	// GetShutdown returns information about ongoing node shutdowns.
+	// Introduced in: Elasticsearch 7.14.0
+	GetShutdown(ctx context.Context, nodeID *string) (ShutdownResponse, error)
+	// PutShutdown initiates a node shutdown procedure for the given node.
+	// Introduced in: Elasticsearch 7.14.0
+	PutShutdown(ctx context.Context, nodeID string, shutdownType ShutdownType, reason string) error
+	// DeleteShutdown attempts to cancel an ongoing node shutdown.
+	// Introduced in: Elasticsearch 7.14.0
+	DeleteShutdown(ctx context.Context, nodeID string) error
 	// Request exposes a low level interface to the underlying HTTP client e.g. for testing purposes.
 	// The Elasticsearch endpoint will be added automatically to the request URL which should therefore just be the path
 	// with a leading /
 	Request(ctx context.Context, r *http.Request) (*http.Response, error)
+	// Version returns the Elasticsearch version this client is constructed for which should equal the minimal version
+	// in the cluster.
+	Version() version.Version
+	// URL returns the Elasticsearch URL configured for this client
+	URL() string
+	// HasProperties checks whether this client has the indicated properties.
+	HasProperties(version version.Version, user BasicAuth, url string, caCerts []*x509.Certificate) bool
 }
 
 // Timeout returns the Elasticsearch client timeout value for the given Elasticsearch resource.
-func Timeout(es esv1.Elasticsearch) time.Duration {
-	return annotation.ExtractTimeout(es.ObjectMeta, ESClientTimeoutAnnotation, DefaultESClientTimeout)
+func Timeout(ctx context.Context, es esv1.Elasticsearch) time.Duration {
+	return annotation.ExtractTimeout(ctx, es.ObjectMeta, ESClientTimeoutAnnotation, DefaultESClientTimeout)
 }
 
 func formatAsSeconds(d time.Duration) string {
@@ -129,13 +153,17 @@ func NewElasticsearchClient(
 	v version.Version,
 	caCerts []*x509.Certificate,
 	timeout time.Duration,
+	debug bool,
 ) Client {
+	client := commonhttp.Client(dialer, caCerts, timeout)
+	client.Transport = apmelasticsearch.WrapRoundTripper(client.Transport)
 	base := &baseClient{
 		Endpoint: esURL,
 		User:     esUser,
 		caCerts:  caCerts,
-		HTTP:     common.HTTPClient(dialer, caCerts, timeout),
+		HTTP:     client,
 		es:       es,
+		debug:    debug,
 	}
 	return versioned(base, v)
 }

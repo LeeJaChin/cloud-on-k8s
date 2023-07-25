@@ -2,7 +2,7 @@
 // or more contributor license agreements. Licensed under the Elastic License 2.0;
 // you may not use this file except in compliance with the Elastic License 2.0.
 
-// +build es e2e
+//go:build es || e2e
 
 package es
 
@@ -11,12 +11,6 @@ import (
 	"fmt"
 	"testing"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/elasticsearch"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -25,6 +19,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/pointer"
+
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/elasticsearch"
 )
 
 // TestVolumeEmptyDir tests a manual override of the default persistent storage with emptyDir.
@@ -76,11 +76,6 @@ func TestVolumeRetention(t *testing.T) {
 }
 
 func TestVolumeMultiDataPath(t *testing.T) {
-	// remove when https://github.com/elastic/elasticsearch/issues/78525 is resolved
-	if version.MustParse(test.Ctx().ElasticStackVersion).GTE(version.MinFor(8, 0, 0)) {
-		t.SkipNow()
-	}
-
 	b := elasticsearch.NewBuilder("test-es-multi-data-path").
 		WithNodeSet(esv1.NodeSet{
 			Name: "default",
@@ -124,7 +119,7 @@ func TestVolumeMultiDataPath(t *testing.T) {
 								corev1.ResourceStorage: resource.MustParse("2Gi"),
 							},
 						},
-						StorageClassName: pointer.StringPtr(elasticsearch.DefaultStorageClass),
+						StorageClassName: pointer.String(test.DefaultStorageClass),
 					},
 				},
 				{
@@ -140,7 +135,7 @@ func TestVolumeMultiDataPath(t *testing.T) {
 								corev1.ResourceStorage: resource.MustParse("2Gi"),
 							},
 						},
-						StorageClassName: pointer.StringPtr(elasticsearch.DefaultStorageClass),
+						StorageClassName: pointer.String(test.DefaultStorageClass),
 					},
 				},
 			},
@@ -170,16 +165,15 @@ func TestVolumeExpansion(t *testing.T) {
 
 	masterSset := esv1.StatefulSet(b.Elasticsearch.Name, b.Elasticsearch.Spec.NodeSets[0].Name)
 	dataSset := esv1.StatefulSet(b.Elasticsearch.Name, b.Elasticsearch.Spec.NodeSets[1].Name)
-	pvcNames := []string{
-		fmt.Sprintf("elasticsearch-data-%s-0", masterSset),
-		fmt.Sprintf("elasticsearch-data-%s-0", dataSset),
-		fmt.Sprintf("elasticsearch-data-%s-1", dataSset),
-	}
 
 	// resize the volume with an additional 1Gi after the cluster is up
 	initialStorageSize := b.Elasticsearch.Spec.NodeSets[0].VolumeClaimTemplates[0].Spec.Resources.Requests.Storage()
 	resizedStorage := initialStorageSize.DeepCopy()
 	resizedStorage.Add(resource.MustParse("1Gi"))
+
+	// Create a copy of the builder with the expected storage resources to use in the regular checks made after updating the Elasticsearch resource
+	scaledUpStorage := b.DeepCopy()
+	patchStorageSize(&scaledUpStorage.Elasticsearch, resizedStorage)
 
 	test.Sequence(nil, func(k *test.K8sClient) test.StepList {
 		return test.StepList{
@@ -192,25 +186,6 @@ func TestVolumeExpansion(t *testing.T) {
 					}
 					patchStorageSize(&es, resizedStorage)
 					return k.Client.Update(context.Background(), &es)
-				}),
-			},
-			{
-				Name: "PVCs should eventually be resized",
-				Test: test.Eventually(func() error {
-					for _, pvcName := range pvcNames {
-						var pvc corev1.PersistentVolumeClaim
-						if err := k.Client.Get(context.Background(), types.NamespacedName{Namespace: b.Elasticsearch.Namespace, Name: pvcName}, &pvc); err != nil {
-							return err
-						}
-						reportedStorage := pvc.Status.Capacity.Storage()
-						if reportedStorage == nil {
-							return fmt.Errorf("no storage size reported in %s status", pvcName)
-						}
-						if !reportedStorage.Equal(resizedStorage) {
-							return fmt.Errorf("expected resized capacity %s but got %s", resizedStorage.String(), reportedStorage.String())
-						}
-					}
-					return nil
 				}),
 			},
 			{
@@ -229,7 +204,7 @@ func TestVolumeExpansion(t *testing.T) {
 				}),
 			},
 			// re-run all the regular checks
-		}.WithSteps(test.CheckTestSteps(b, k))
+		}.WithSteps(test.CheckTestSteps(scaledUpStorage, k))
 	}, b).RunSequential(t)
 }
 
@@ -252,7 +227,7 @@ func getResizeableStorageClass(k8sClient k8s.Client) (string, error) {
 func patchStorageClasses(es *esv1.Elasticsearch, storageClassName string) {
 	for nodeSetIndex := range es.Spec.NodeSets {
 		for claimIndex := range es.Spec.NodeSets[nodeSetIndex].VolumeClaimTemplates {
-			es.Spec.NodeSets[nodeSetIndex].VolumeClaimTemplates[claimIndex].Spec.StorageClassName = pointer.StringPtr(storageClassName)
+			es.Spec.NodeSets[nodeSetIndex].VolumeClaimTemplates[claimIndex].Spec.StorageClassName = pointer.String(storageClassName)
 		}
 	}
 }

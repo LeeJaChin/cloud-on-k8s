@@ -16,16 +16,15 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"github.com/elastic/cloud-on-k8s/pkg/about"
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/apis/maps/v1alpha1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/annotation"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/certificates"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/license"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/operator"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/watches"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/about"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/apis/maps/v1alpha1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/certificates"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/license"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/operator"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/watches"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 var nsnFixture = types.NamespacedName{
@@ -34,17 +33,27 @@ var nsnFixture = types.NamespacedName{
 }
 var emsFixture = v1alpha1.ElasticMapsServer{
 	ObjectMeta: metav1.ObjectMeta{
-		Namespace: nsnFixture.Namespace,
-		Name:      nsnFixture.Name,
+		Namespace:  nsnFixture.Namespace,
+		Name:       nsnFixture.Name,
+		Generation: 2,
 	},
 	Spec: v1alpha1.MapsSpec{
 		Version: "7.12.0",
 		Count:   1,
 	},
+	Status: v1alpha1.MapsStatus{
+		ObservedGeneration: 1,
+	},
 }
 
 func TestReconcileMapsServer_Reconcile(t *testing.T) {
 	timeFixture := metav1.Now()
+
+	assertObservedGeneration := func(r k8s.Client, expected int) {
+		var ems v1alpha1.ElasticMapsServer
+		require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: nsnFixture.Name, Namespace: nsnFixture.Namespace}, &ems))
+		require.Equal(t, int64(expected), ems.Status.ObservedGeneration)
+	}
 	tests := []struct {
 		name             string
 		reconciler       ReconcileMapsServer
@@ -77,7 +86,15 @@ func TestReconcileMapsServer_Reconcile(t *testing.T) {
 			name: "Resource marked for deletion",
 			reconciler: ReconcileMapsServer{
 				Client: k8s.NewFakeClient(&v1alpha1.ElasticMapsServer{
-					ObjectMeta: metav1.ObjectMeta{Name: nsnFixture.Name, Namespace: nsnFixture.Namespace, DeletionTimestamp: &timeFixture},
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              nsnFixture.Name,
+						Namespace:         nsnFixture.Namespace,
+						DeletionTimestamp: &timeFixture, Generation: 2,
+						Finalizers: []string{"something"},
+					},
+					Status: v1alpha1.MapsStatus{
+						ObservedGeneration: 1,
+					},
 				}),
 				licenseChecker: license.MockLicenseChecker{EnterpriseEnabled: true},
 				dynamicWatches: watches.NewDynamicWatches(),
@@ -92,6 +109,9 @@ func TestReconcileMapsServer_Reconcile(t *testing.T) {
 			post: func(r ReconcileMapsServer) {
 				// watches should have been cleared
 				require.Empty(t, r.DynamicWatches().Secrets.Registrations())
+
+				// observedGeneration should not have been updated
+				assertObservedGeneration(r, 1)
 			},
 			wantErr: false,
 		},
@@ -120,28 +140,14 @@ func TestReconcileMapsServer_Reconcile(t *testing.T) {
 				Parameters:     operator.Parameters{OperatorInfo: about.OperatorInfo{BuildInfo: about.BuildInfo{Version: "1.6.0"}}},
 			},
 			post: func(r ReconcileMapsServer) {
-				e := <-r.recorder.(*record.FakeRecorder).Events
+				e := <-r.recorder.(*record.FakeRecorder).Events //nolint:forcetypeassert
 				require.Equal(t, "Warning ReconciliationError Elastic Maps Server is an enterprise feature. Enterprise features are disabled", e)
+
+				// observedGeneration should have been updated
+				assertObservedGeneration(r, 2)
 			},
 			wantRequeue:      true,
 			wantRequeueAfter: true, // license recheck
-			wantErr:          false,
-		},
-		{
-			name: "Sets controller version",
-			reconciler: ReconcileMapsServer{
-				Client:         k8s.NewFakeClient(&emsFixture),
-				recorder:       record.NewFakeRecorder(10),
-				dynamicWatches: watches.NewDynamicWatches(),
-				licenseChecker: license.MockLicenseChecker{EnterpriseEnabled: true},
-				Parameters:     operator.Parameters{OperatorInfo: about.OperatorInfo{BuildInfo: about.BuildInfo{Version: "1.6.0"}}},
-			},
-			post: func(r ReconcileMapsServer) {
-				var reconciled v1alpha1.ElasticMapsServer
-				require.NoError(t, r.Get(context.Background(), nsnFixture, &reconciled))
-				require.Equal(t, map[string]string{annotation.ControllerVersionAnnotation: "1.6.0"}, reconciled.Annotations)
-			},
-			wantRequeueAfter: true, // certificate rotation
 			wantErr:          false,
 		},
 		{
@@ -149,15 +155,23 @@ func TestReconcileMapsServer_Reconcile(t *testing.T) {
 			reconciler: ReconcileMapsServer{
 				Client: k8s.NewFakeClient(&v1alpha1.ElasticMapsServer{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      nsnFixture.Name,
-						Namespace: nsnFixture.Namespace,
+						Name:       nsnFixture.Name,
+						Namespace:  nsnFixture.Namespace,
+						Generation: 2,
 					},
 					Spec: v1alpha1.MapsSpec{
 						Version: "7.10.0", // unsupported version
 					},
+					Status: v1alpha1.MapsStatus{
+						ObservedGeneration: 1,
+					},
 				}),
 				licenseChecker: license.MockLicenseChecker{EnterpriseEnabled: true},
 				recorder:       record.NewFakeRecorder(10),
+			},
+			post: func(r ReconcileMapsServer) {
+				// observedGeneration should have been updated
+				assertObservedGeneration(r, 2)
 			},
 			wantErr: true,
 		},
@@ -166,12 +180,16 @@ func TestReconcileMapsServer_Reconcile(t *testing.T) {
 			reconciler: ReconcileMapsServer{
 				Client: k8s.NewFakeClient(&v1alpha1.ElasticMapsServer{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      nsnFixture.Name,
-						Namespace: nsnFixture.Namespace,
+						Name:       nsnFixture.Name,
+						Namespace:  nsnFixture.Namespace,
+						Generation: 2,
 					},
 					Spec: v1alpha1.MapsSpec{
 						Version:          "7.12.0",
 						ElasticsearchRef: commonv1.ObjectSelector{Name: "es", Namespace: "ns"},
+					},
+					Status: v1alpha1.MapsStatus{
+						ObservedGeneration: 1,
 					},
 				}),
 				dynamicWatches: watches.NewDynamicWatches(),
@@ -179,8 +197,11 @@ func TestReconcileMapsServer_Reconcile(t *testing.T) {
 				recorder:       record.NewFakeRecorder(10),
 			},
 			post: func(r ReconcileMapsServer) {
-				e := <-r.recorder.(*record.FakeRecorder).Events
+				e := <-r.recorder.(*record.FakeRecorder).Events //nolint:forcetypeassert
 				require.Equal(t, "Warning AssociationError Association backend for elasticsearch is not configured", e)
+
+				// observedGeneration should have been updated
+				assertObservedGeneration(r, 2)
 			},
 			wantErr: false,
 		},
@@ -194,10 +215,14 @@ func TestReconcileMapsServer_Reconcile(t *testing.T) {
 						Annotations: map[string]string{
 							"association.k8s.elastic.co/es-conf": `{"authSecretName":"test-resource-maps-user","authSecretKey":"ns-test-resource-maps-user","caCertProvided":true,"caSecretName": "test-resource-es-ca","url":"https://es-es-http.ns.svc:9200","version":"7.10.0"}`,
 						},
+						Generation: 2,
 					},
 					Spec: v1alpha1.MapsSpec{
 						Version:          "7.12.0",
 						ElasticsearchRef: commonv1.ObjectSelector{Name: "es", Namespace: "ns"},
+					},
+					Status: v1alpha1.MapsStatus{
+						ObservedGeneration: 1,
 					},
 				}),
 				dynamicWatches: watches.NewDynamicWatches(),
@@ -205,10 +230,15 @@ func TestReconcileMapsServer_Reconcile(t *testing.T) {
 				recorder:       record.NewFakeRecorder(10),
 			},
 			post: func(r ReconcileMapsServer) {
-				e := <-r.recorder.(*record.FakeRecorder).Events
+				e := <-r.recorder.(*record.FakeRecorder).Events //nolint:forcetypeassert
 				require.Equal(t, "Warning Delayed Delaying deployment of version 7.12.0 since the referenced elasticsearch is not upgraded yet", e)
+
+				// observedGeneration should have been updated
+				assertObservedGeneration(r, 2)
 			},
 			wantErr: false,
+			// retry from certificate reconciliation.
+			wantRequeueAfter: true,
 		},
 		{
 			name: "Happy path: first reconciliation",
@@ -253,8 +283,11 @@ func TestReconcileMapsServer_Reconcile(t *testing.T) {
 				err = r.Client.Get(context.Background(), types.NamespacedName{Namespace: "ns", Name: "test-resource-ems"}, &dep)
 				require.NoError(t, err)
 				require.Equal(t, int32(1), *dep.Spec.Replicas)
-				// with the config hash label set
-				require.NotEmpty(t, dep.Spec.Template.Labels[configHashLabel])
+				// with the config hash annotation set
+				require.NotEmpty(t, dep.Spec.Template.Annotations[configHashAnnotationName])
+
+				// observedGeneration should have been updated
+				assertObservedGeneration(r, 2)
 			},
 			wantRequeue:      false,
 			wantRequeueAfter: true, // certificate refresh
@@ -326,7 +359,7 @@ func Test_buildConfigHash(t *testing.T) {
 				ems:          emsWithAssoc,
 				configSecret: cfgFixture,
 			},
-			want:    "617f1ef5547de7a7c41cc8ae1275ae9734d71549385de682782b9d89",
+			want:    "3032871734",
 			wantErr: false,
 		},
 		{
@@ -336,7 +369,7 @@ func Test_buildConfigHash(t *testing.T) {
 				ems:          emsNoTLS,
 				configSecret: cfgFixture,
 			},
-			want:    "f6400f877a3bb3a6530075729e3db69ac093d53185439b82ecd6ea60",
+			want:    "2560904737",
 			wantErr: false,
 		},
 		{
@@ -346,7 +379,7 @@ func Test_buildConfigHash(t *testing.T) {
 				ems:          emsFixture,
 				configSecret: cfgFixture,
 			},
-			want:    "da5a1cba8225f2383138d4055180307f751bd267e9381f27ed5dbf63",
+			want:    "3032871734",
 			wantErr: false,
 		},
 		{
@@ -365,7 +398,8 @@ func Test_buildConfigHash(t *testing.T) {
 				ems:          emsWithAssoc,
 				configSecret: cfgFixture,
 			},
-			wantErr: true,
+			want:    "3032871734",
+			wantErr: false,
 		},
 	}
 	for _, tt := range tests {

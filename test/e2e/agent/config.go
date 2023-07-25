@@ -5,6 +5,46 @@
 package agent
 
 const (
+	E2EFleetPolicies = `
+    xpack.fleet.packages:
+    - name: system
+      version: latest
+    - name: elastic_agent
+      version: latest
+    - name: fleet_server
+      version: latest
+    - name: kubernetes
+      version: latest
+    xpack.fleet.agentPolicies:
+    - name: Fleet Server on ECK policy
+      id: eck-fleet-server
+      namespace: default
+      monitoring_enabled:
+      - logs
+      - metrics
+      unenroll_timeout: 900
+      is_default_fleet_server: true
+      package_policies:
+      - name: fleet_server-1
+        id: fleet_server-1
+        package:
+          name: fleet_server
+    - name: Elastic Agent on ECK policy
+      id: eck-agent
+      namespace: default
+      monitoring_enabled:
+      - logs
+      - metrics
+      unenroll_timeout: 900
+      is_default: true
+      package_policies:
+      - package:
+          name: system
+        name: system-1
+      - package:
+          name: kubernetes
+        name: kubernetes-1`
+
 	E2EAgentSystemIntegrationConfig = `id: 2d70a6f0-33a5-11eb-bb2f-418d0388a8cf
 revision: 2
 agent:
@@ -14,7 +54,7 @@ agent:
     logs: true
     metrics: true
 inputs:
-  - id: 2e187fb0-33a5-11eb-bb2f-418d0388a8cf
+  - id: logfile-system-835850a7-3f6b-4ae9-8d02-a9a15767cf39
     name: system-1
     revision: 1
     type: logfile
@@ -22,7 +62,7 @@ inputs:
     meta:
       package:
         name: system
-        version: 0.9.1
+        version: 1.20.4
     data_stream:
       namespace: default
     streams:
@@ -44,7 +84,7 @@ inputs:
               target: ''
               fields:
                 ecs.version: 1.5.0
-      - id: logfile-system.syslog
+      - id: logfile-system.syslog-835850a7-3f6b-4ae9-8d02-a9a15767cf39
         data_stream:
           dataset: system.syslog
           type: logs
@@ -58,11 +98,7 @@ inputs:
           match: after
         processors:
           - add_locale: {}
-          - add_fields:
-              target: ''
-              fields:
-                ecs.version: 1.5.0
-  - id: 2e187fb0-33a5-11eb-bb2f-418d0388a8cf
+  - id: system/metrics-system-835850a7-3f6b-4ae9-8d02-a9a15767cf39
     name: system-1
     revision: 1
     type: system/metrics
@@ -178,6 +214,8 @@ inputs:
     - mountPath: /var/log
       name: varlog
   dnsPolicy: ClusterFirstWithHostNet
+  securityContext:
+    runAsUser: 0
   terminationGracePeriodSeconds: 30
   volumes:
   - hostPath:
@@ -194,7 +232,7 @@ agent:
     logs: true
     metrics: true
 inputs:
-  - id: 2e187fb0-33a5-11eb-bb2f-418d0388a8cf
+  - id: logfile-system-835850a7-3f6b-4ae9-8d02-a9a15767cf39
     name: system-1
     revision: 1
     type: logfile
@@ -202,7 +240,7 @@ inputs:
     meta:
       package:
         name: system
-        version: 0.9.1
+        version: 1.20.4
     data_stream:
       namespace: default
     streams:
@@ -242,7 +280,7 @@ inputs:
               target: ''
               fields:
                 ecs.version: 1.5.0
-  - id: 2e187fb0-33a5-11eb-bb2f-418d0388a8cf
+  - id: system/metrics-system-835850a7-3f6b-4ae9-8d02-a9a15767cf39
     name: system-1
     revision: 1
     type: system/metrics
@@ -250,7 +288,7 @@ inputs:
     meta:
       package:
         name: system
-        version: 0.9.1
+        version: 1.20.4
     data_stream:
       namespace: default
     streams:

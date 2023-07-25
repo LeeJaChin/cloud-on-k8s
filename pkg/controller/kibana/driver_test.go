@@ -5,6 +5,7 @@
 package kibana
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -16,20 +17,19 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	kbv1 "github.com/elastic/cloud-on-k8s/pkg/apis/kibana/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/certificates"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/deployment"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/watches"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/settings"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/kibana/network"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/compare"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	kbv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/kibana/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/certificates"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/deployment"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/watches"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/settings"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/kibana/network"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/compare"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 var customResourceLimits = corev1.ResourceRequirements{
@@ -38,8 +38,8 @@ var customResourceLimits = corev1.ResourceRequirements{
 
 func Test_getStrategyType(t *testing.T) {
 	// creates `count` of pods belonging to `kbName` Kibana and to `rs-kbName-version` ReplicaSet
-	getPods := func(kbName string, podCount int, version string) []runtime.Object {
-		var result []runtime.Object
+	getPods := func(kbName string, podCount int, version string) []client.Object {
+		var result []client.Object
 		for i := 0; i < podCount; i++ {
 			result = append(result, &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
@@ -58,7 +58,7 @@ func Test_getStrategyType(t *testing.T) {
 		return result
 	}
 
-	clearVersionLabels := func(objects []runtime.Object) []runtime.Object {
+	clearVersionLabels := func(objects []client.Object) []client.Object {
 		for _, object := range objects {
 			pod, ok := object.(*corev1.Pod)
 			if !ok {
@@ -75,7 +75,7 @@ func Test_getStrategyType(t *testing.T) {
 		name            string
 		expectedKbName  string
 		expectedVersion string
-		initialObjects  []runtime.Object
+		initialObjects  []client.Object
 		clientError     bool
 		wantErr         bool
 		wantStrategy    appsv1.DeploymentStrategyType
@@ -84,7 +84,7 @@ func Test_getStrategyType(t *testing.T) {
 			name:            "Pods not created yet",
 			expectedVersion: "7.4.0",
 			expectedKbName:  "test",
-			initialObjects:  []runtime.Object{},
+			initialObjects:  []client.Object{},
 			clientError:     false,
 			wantErr:         false,
 			wantStrategy:    appsv1.RollingUpdateDeploymentStrategyType,
@@ -197,7 +197,7 @@ func Test_getStrategyType(t *testing.T) {
 func TestDriverDeploymentParams(t *testing.T) {
 	type args struct {
 		kb             func() *kbv1.Kibana
-		initialObjects func() []runtime.Object
+		initialObjects func() []client.Object
 	}
 
 	tests := []struct {
@@ -210,7 +210,7 @@ func TestDriverDeploymentParams(t *testing.T) {
 			name: "without remote objects",
 			args: args{
 				kb:             kibanaFixture,
-				initialObjects: func() []runtime.Object { return nil },
+				initialObjects: func() []client.Object { return nil },
 			},
 			want:    deployment.Params{},
 			wantErr: true,
@@ -241,7 +241,7 @@ func TestDriverDeploymentParams(t *testing.T) {
 				params.PodTemplateSpec.Spec.Volumes = params.PodTemplateSpec.Spec.Volumes[1:]
 				params.PodTemplateSpec.Spec.InitContainers[0].VolumeMounts = params.PodTemplateSpec.Spec.InitContainers[0].VolumeMounts[1:]
 				params.PodTemplateSpec.Spec.Containers[0].VolumeMounts = params.PodTemplateSpec.Spec.Containers[0].VolumeMounts[1:]
-				params.PodTemplateSpec.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Scheme = corev1.URISchemeHTTP
+				params.PodTemplateSpec.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Scheme = corev1.URISchemeHTTP
 				params.PodTemplateSpec.Spec.Containers[0].Ports[0].Name = "http"
 				return params
 			}(),
@@ -269,15 +269,15 @@ func TestDriverDeploymentParams(t *testing.T) {
 			name: "Checksum takes secret contents into account",
 			args: args{
 				kb: kibanaFixture,
-				initialObjects: func() []runtime.Object {
-					return []runtime.Object{
+				initialObjects: func() []client.Object {
+					return []client.Object{
 						&corev1.Secret{
 							ObjectMeta: metav1.ObjectMeta{
 								Name:      "es-ca-secret",
 								Namespace: "default",
 							},
 							Data: map[string][]byte{
-								certificates.CertFileName: nil,
+								certificates.CAFileName: nil,
 							},
 						},
 						&corev1.Secret{
@@ -312,7 +312,7 @@ func TestDriverDeploymentParams(t *testing.T) {
 			},
 			want: func() deployment.Params {
 				p := expectedDeploymentParams()
-				p.PodTemplateSpec.Labels["kibana.k8s.elastic.co/config-checksum"] = "c5496152d789682387b90ea9b94efcd82a2c6f572f40c016fb86c0d7"
+				p.PodTemplateSpec.Annotations["kibana.k8s.elastic.co/config-hash"] = "2368465874"
 				return p
 			}(),
 			wantErr: false,
@@ -363,7 +363,7 @@ func TestDriverDeploymentParams(t *testing.T) {
 			d, err := newDriver(client, w, record.NewFakeRecorder(100), kb, corev1.IPv4Protocol)
 			require.NoError(t, err)
 
-			got, err := d.deploymentParams(kb)
+			got, err := d.deploymentParams(context.Background(), kb)
 			if tt.wantErr {
 				require.Error(t, err)
 				return
@@ -428,13 +428,13 @@ func expectedDeploymentParams() deployment.Params {
 		PodTemplateSpec: corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{
 				Labels: map[string]string{
-					"common.k8s.elastic.co/type":            "kibana",
-					"kibana.k8s.elastic.co/name":            "test",
-					"kibana.k8s.elastic.co/config-checksum": "c530a02188193a560326ce91e34fc62dcbd5722b45534a3f60957663",
-					"kibana.k8s.elastic.co/version":         "7.0.0",
+					"common.k8s.elastic.co/type":    "kibana",
+					"kibana.k8s.elastic.co/name":    "test",
+					"kibana.k8s.elastic.co/version": "7.0.0",
 				},
 				Annotations: map[string]string{
-					"co.elastic.logs/module": "kibana",
+					"co.elastic.logs/module":            "kibana",
+					"kibana.k8s.elastic.co/config-hash": "272660573",
 				},
 			},
 			Spec: corev1.PodSpec{
@@ -571,7 +571,7 @@ func expectedDeploymentParams() deployment.Params {
 						PeriodSeconds:       10,
 						SuccessThreshold:    1,
 						TimeoutSeconds:      5,
-						Handler: corev1.Handler{
+						ProbeHandler: corev1.ProbeHandler{
 							HTTPGet: &corev1.HTTPGetAction{
 								Port:   intstr.FromInt(5601),
 								Path:   "/login",
@@ -634,15 +634,15 @@ func kibanaFixtureWithPodTemplate() *kbv1.Kibana {
 	return kbFixture
 }
 
-func defaultInitialObjects() []runtime.Object {
-	return []runtime.Object{
+func defaultInitialObjects() []client.Object {
+	return []client.Object{
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "es-ca-secret",
 				Namespace: "default",
 			},
 			Data: map[string][]byte{
-				certificates.CertFileName: nil,
+				certificates.CAFileName: nil,
 			},
 		},
 		&corev1.Secret{
@@ -669,7 +669,7 @@ func defaultInitialObjects() []runtime.Object {
 				Namespace: "default",
 			},
 			Data: map[string][]byte{
-				"tls.crt": nil,
+				"ca.crt": nil,
 			},
 		},
 	}
@@ -769,8 +769,8 @@ func mkService() corev1.Service {
 			Name:      "kibana-test-kb-http",
 			Namespace: "test",
 			Labels: map[string]string{
-				KibanaNameLabelName:  "kibana-test",
-				common.TypeLabelName: Type,
+				KibanaNameLabelName:    "kibana-test",
+				commonv1.TypeLabelName: Type,
 			},
 		},
 		Spec: corev1.ServiceSpec{
@@ -782,8 +782,8 @@ func mkService() corev1.Service {
 				},
 			},
 			Selector: map[string]string{
-				KibanaNameLabelName:  "kibana-test",
-				common.TypeLabelName: Type,
+				KibanaNameLabelName:    "kibana-test",
+				commonv1.TypeLabelName: Type,
 			},
 		},
 	}

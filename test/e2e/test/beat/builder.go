@@ -9,31 +9,26 @@ import (
 	"testing"
 
 	ghodssyaml "github.com/ghodss/yaml"
+	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
-
-	"github.com/stretchr/testify/require"
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	beatv1beta1 "github.com/elastic/cloud-on-k8s/pkg/apis/beat/v1beta1"
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	beatcommon "github.com/elastic/cloud-on-k8s/pkg/controller/beat/common"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/settings"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
-	"github.com/elastic/cloud-on-k8s/test/e2e/cmd/run"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test"
+	beatv1beta1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/beat/v1beta1"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	beatcommon "github.com/elastic/cloud-on-k8s/v2/pkg/controller/beat/common"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/settings"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/client"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/cmd/run"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
 )
 
 const (
-	PSPClusterRoleName            = "elastic-beat-restricted"
-	AuditbeatPSPClusterRoleName   = "elastic-auditbeat-restricted"
-	PacketbeatPSPClusterRoleName  = "elastic-packetbeat-restricted"
-	JournalbeatPSPClusterRoleName = "elastic-journalbeat-restricted"
-
 	AutodiscoverClusterRoleName = "elastic-beat-autodiscover"
 	MetricbeatClusterRoleName   = "elastic-beat-metricbeat"
 )
@@ -49,15 +44,11 @@ type Builder struct {
 
 	// Suffix is the suffix that is added to e2e test resources
 	Suffix string
+
+	MutatedFrom *Builder
 }
 
 func (b Builder) SkipTest() bool {
-	// Beat on OpenShift3 requires specific securityContext due to hostPath volumes.
-	// Skipping all Beat tests to reduce maintenance burden.
-	if test.Ctx().Provider == "ocp3" {
-		return true
-	}
-
 	ver := version.MustParse(b.Beat.Spec.Version)
 	return version.SupportedBeatVersions.WithinRange(ver) != nil
 }
@@ -106,7 +97,9 @@ func newBuilder(name string, suffix string) Builder {
 type ValidationFunc func(client.Client) error
 
 func (b Builder) WithType(typ beatcommon.Type) Builder {
-	b.Beat.Spec.Type = string(typ)
+	typeStr := string(typ)
+	b.Beat.Spec.Type = typeStr
+	b.Beat.Spec.Version = test.Ctx().ElasticStackVersion
 	return b
 }
 
@@ -195,20 +188,17 @@ func (b Builder) WithRestrictedSecurityContext() Builder {
 	return b
 }
 
-func (b Builder) WithContainerSecurityContext(securityContext corev1.SecurityContext) Builder {
-	for i := range b.PodTemplate.Spec.Containers {
-		b.PodTemplate.Spec.Containers[i].SecurityContext = &securityContext
-	}
-
-	return b
-}
-
 func (b Builder) WithLabel(key, value string) Builder {
 	if b.Beat.Labels == nil {
 		b.Beat.Labels = make(map[string]string)
 	}
 	b.Beat.Labels[key] = value
 
+	return b
+}
+
+func (b Builder) WithMutatedFrom(builder *Builder) Builder {
+	b.MutatedFrom = builder
 	return b
 }
 
@@ -319,4 +309,41 @@ func ApplyYamls(t *testing.T, b Builder, configYaml, podTemplateYaml string) Bui
 	}
 
 	return b
+}
+
+func (b Builder) WithMonitoring(esRef commonv1.ObjectSelector) Builder {
+	b.Beat.Spec.Monitoring.Metrics.ElasticsearchRefs = []commonv1.ObjectSelector{esRef}
+	return b
+}
+
+func (b Builder) GetMetricsIndexPattern() string {
+	v := version.MustParse(test.Ctx().ElasticStackVersion)
+	if v.GTE(version.MinFor(8, 0, 0)) {
+		return fmt.Sprintf("metricbeat-%d.%d.%d*", v.Major, v.Minor, v.Patch)
+	}
+	return ".monitoring-beats-*"
+}
+
+func (b Builder) Name() string {
+	return b.Beat.Name
+}
+
+func (b Builder) Namespace() string {
+	return b.Beat.Namespace
+}
+
+func (b Builder) GetMetricsCluster() *types.NamespacedName {
+	if len(b.Beat.Spec.Monitoring.Metrics.ElasticsearchRefs) == 0 {
+		return nil
+	}
+	metricsCluster := b.Beat.Spec.Monitoring.Metrics.ElasticsearchRefs[0].NamespacedName()
+	return &metricsCluster
+}
+
+func (b Builder) GetLogsCluster() *types.NamespacedName {
+	if len(b.Beat.Spec.Monitoring.Metrics.ElasticsearchRefs) == 0 {
+		return nil
+	}
+	metricsCluster := b.Beat.Spec.Monitoring.Logs.ElasticsearchRefs[0].NamespacedName()
+	return &metricsCluster
 }

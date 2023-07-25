@@ -6,6 +6,7 @@ package license
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -17,12 +18,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/util/yaml"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	apmv1 "github.com/elastic/cloud-on-k8s/pkg/apis/apm/v1"
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	entv1 "github.com/elastic/cloud-on-k8s/pkg/apis/enterprisesearch/v1"
-	kbv1 "github.com/elastic/cloud-on-k8s/pkg/apis/kibana/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	apmv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/apm/v1"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	entv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/enterprisesearch/v1"
+	kbv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/kibana/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 func TestMemFromJavaOpts(t *testing.T) {
@@ -68,27 +70,6 @@ func TestMemFromJavaOpts(t *testing.T) {
 			expected: resource.MustParse("2Mi"),
 		},
 		{
-			name:   "without value",
-			actual: "-XmxM",
-			isErr:  true,
-		},
-		{
-			name:   "with an invalid Xmx",
-			actual: "-XMX1k",
-			isErr:  true,
-		},
-		{
-			name:   "with an invalid unit",
-			actual: "-Xmx64GB",
-			isErr:  true,
-		},
-		{
-			name:     "without xmx",
-			actual:   "-Xms1k",
-			expected: resource.MustParse("16777216k"),
-			isErr:    true,
-		},
-		{
 			name:     "with trailing spaces at the end",
 			actual:   "-Xms1k -Xmx8388608k   ",
 			expected: resource.MustParse("16777216Ki"),
@@ -97,6 +78,11 @@ func TestMemFromJavaOpts(t *testing.T) {
 			name:     "with trailing space at the beginning",
 			actual:   "  -Xms1k -Xmx8388608k",
 			expected: resource.MustParse("16777216Ki"),
+		},
+		{
+			name:     "no memory setting detected",
+			actual:   "-Dlog4j2.formatMsgNoLookups=true",
+			expected: resource.MustParse("0"),
 		},
 	}
 	for _, tt := range tests {
@@ -153,12 +139,12 @@ func TestAggregator(t *testing.T) {
 	client := k8s.NewFakeClient(objects...)
 	aggregator := Aggregator{client: client}
 
-	val, err := aggregator.AggregateMemory()
+	val, err := aggregator.AggregateMemory(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, 349.940350976, inGB(val))
+	require.Equal(t, 325.9073486328125, inGiB(val))
 }
 
-func readObjects(t *testing.T, filePath string) []runtime.Object {
+func readObjects(t *testing.T, filePath string) []client.Object {
 	t.Helper()
 
 	scheme := runtime.NewScheme()
@@ -175,7 +161,7 @@ func readObjects(t *testing.T, filePath string) []runtime.Object {
 
 	yamlReader := yaml.NewYAMLReader(bufio.NewReader(f))
 
-	var objects []runtime.Object
+	var objects []client.Object
 
 	for {
 		yamlBytes, err := yamlReader.Read()
@@ -186,8 +172,11 @@ func readObjects(t *testing.T, filePath string) []runtime.Object {
 
 			require.NoError(t, err)
 		}
-		obj, _, err := decoder.Decode(yamlBytes, nil, nil)
+		runtimeObj, _, err := decoder.Decode(yamlBytes, nil, nil)
 		require.NoError(t, err)
+
+		obj, ok := runtimeObj.(client.Object)
+		require.True(t, ok)
 
 		objects = append(objects, obj)
 	}

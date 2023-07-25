@@ -11,12 +11,15 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/maps"
+	policyv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/stackconfigpolicy/v1alpha1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
+	ulog "github.com/elastic/cloud-on-k8s/v2/pkg/utils/log"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/maps"
 )
 
 // labels set on secrets which cannot rely on owner references due to https://github.com/kubernetes/kubernetes/issues/65200,
@@ -27,11 +30,19 @@ const (
 	SoftOwnerKindLabel      = "eck.k8s.elastic.co/owner-kind"
 )
 
+func WithPostUpdate(f func()) func(p *Params) {
+	return func(p *Params) {
+		p.PostUpdate = f
+	}
+}
+
 // ReconcileSecret creates or updates the actual secret to match the expected one.
 // Existing annotations or labels that are not expected are preserved.
-func ReconcileSecret(c k8s.Client, expected corev1.Secret, owner client.Object) (corev1.Secret, error) {
+func ReconcileSecret(ctx context.Context, c k8s.Client, expected corev1.Secret, owner client.Object, opts ...func(*Params)) (corev1.Secret, error) {
 	var reconciled corev1.Secret
-	if err := ReconcileResource(Params{
+
+	params := Params{
+		Context:    ctx,
 		Client:     c,
 		Owner:      owner,
 		Expected:   &expected,
@@ -50,7 +61,11 @@ func ReconcileSecret(c k8s.Client, expected corev1.Secret, owner client.Object) 
 			reconciled.Annotations = maps.Merge(reconciled.Annotations, expected.Annotations)
 			reconciled.Data = expected.Data
 		},
-	}); err != nil {
+	}
+	for _, opt := range opts {
+		opt(&params)
+	}
+	if err := ReconcileResource(params); err != nil {
 		return corev1.Secret{}, err
 	}
 	return reconciled, nil
@@ -89,7 +104,7 @@ func SoftOwnerRefFromLabels(labels map[string]string) (SoftOwnerRef, bool) {
 //
 // Since they won't have an ownerReference specified, reconciled secrets will not be deleted automatically on parent deletion.
 // To account for that, we add labels to reference the "soft owner", for garbage collection by the operator on parent resource deletion.
-func ReconcileSecretNoOwnerRef(c k8s.Client, expected corev1.Secret, softOwner runtime.Object) (corev1.Secret, error) {
+func ReconcileSecretNoOwnerRef(ctx context.Context, c k8s.Client, expected corev1.Secret, softOwner runtime.Object) (corev1.Secret, error) {
 	// this function is similar to "ReconcileSecret", but:
 	// - we don't pass an owner
 	// - we remove the existing owner
@@ -107,6 +122,7 @@ func ReconcileSecretNoOwnerRef(c k8s.Client, expected corev1.Secret, softOwner r
 
 	var reconciled corev1.Secret
 	if err := ReconcileResource(Params{
+		Context:    ctx,
 		Client:     c,
 		Owner:      nil,
 		Expected:   &expected,
@@ -137,20 +153,21 @@ func ReconcileSecretNoOwnerRef(c k8s.Client, expected corev1.Secret, softOwner r
 
 // GarbageCollectSoftOwnedSecrets deletes all secrets whose labels reference a soft owner.
 // To be called once that owner gets deleted.
-func GarbageCollectSoftOwnedSecrets(c k8s.Client, deletedOwner types.NamespacedName, ownerKind string) error {
+func GarbageCollectSoftOwnedSecrets(ctx context.Context, c k8s.Client, deletedOwner types.NamespacedName, ownerKind string) error {
+	log := ulog.FromContext(ctx)
 	var secrets corev1.SecretList
-	if err := c.List(context.Background(),
-		&secrets,
-		// restrict to secrets in the parent namespace, we don't want to delete
-		// secrets users may have manually copied into other namespaces
-		client.InNamespace(deletedOwner.Namespace),
-		// restrict to secrets on which we set the soft owner labels
-		client.MatchingLabels{
-			SoftOwnerNamespaceLabel: deletedOwner.Namespace,
-			SoftOwnerNameLabel:      deletedOwner.Name,
-			SoftOwnerKindLabel:      ownerKind,
-		},
-	); err != nil {
+	// restrict to secrets on which we set the soft owner labels
+	listOpts := []client.ListOption{client.MatchingLabels{
+		SoftOwnerNamespaceLabel: deletedOwner.Namespace,
+		SoftOwnerNameLabel:      deletedOwner.Name,
+		SoftOwnerKindLabel:      ownerKind,
+	}}
+	// restrict to secrets in the parent namespace, we don't want to delete secrets users may have manually copied into
+	// other namespaces (except for kind where we control these secrets)
+	if restrictedToOwnerNamespace(ownerKind) {
+		listOpts = append(listOpts, client.InNamespace(deletedOwner.Namespace))
+	}
+	if err := c.List(ctx, &secrets, listOpts...); err != nil {
 		return err
 	}
 	for i := range secrets.Items {
@@ -158,7 +175,7 @@ func GarbageCollectSoftOwnedSecrets(c k8s.Client, deletedOwner types.NamespacedN
 		log.Info("Garbage collecting secret",
 			"namespace", deletedOwner.Namespace, "secret_name", s.Name,
 			"owner_name", deletedOwner.Name, "owner_kind", ownerKind)
-		err := c.Delete(context.Background(), &s)
+		err := c.Delete(ctx, &s, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &s.UID}})
 		if apierrors.IsNotFound(err) {
 			// already deleted, all good
 			continue
@@ -175,23 +192,23 @@ func GarbageCollectSoftOwnedSecrets(c k8s.Client, deletedOwner types.NamespacedN
 // Should be called on operator startup, after cache warm-up, to cover cases where
 // the operator is down when the owner is deleted.
 // If the operator is up, garbage collection is already handled by GarbageCollectSoftOwnedSecrets on owner deletion.
-func GarbageCollectAllSoftOwnedOrphanSecrets(c k8s.Client, ownerKinds map[string]client.Object) error {
+func GarbageCollectAllSoftOwnedOrphanSecrets(ctx context.Context, c k8s.Client, ownerKinds map[string]client.Object) error {
 	// retrieve all secrets that reference a soft owner
 	var secrets corev1.SecretList
-	if err := c.List(context.Background(),
+	if err := c.List(ctx,
 		&secrets,
 		client.HasLabels{SoftOwnerNamespaceLabel, SoftOwnerNameLabel, SoftOwnerKindLabel},
 	); err != nil {
 		return err
 	}
-	// remove any secret whose owner in the same namespace doesn't exist
+	// remove any secret whose owner doesn't exist
 	for i := range secrets.Items {
 		secret := secrets.Items[i]
 		softOwner, referenced := SoftOwnerRefFromLabels(secret.Labels)
 		if !referenced {
 			continue
 		}
-		if softOwner.Namespace != secret.Namespace {
+		if restrictedToOwnerNamespace(softOwner.Kind) && softOwner.Namespace != secret.Namespace {
 			// Secret references an owner in a different namespace: this likely results
 			// from a "manual" copy of the secret in another namespace, not handled by the operator.
 			// We don't want to touch that secret.
@@ -202,15 +219,16 @@ func GarbageCollectAllSoftOwnedOrphanSecrets(c k8s.Client, ownerKinds map[string
 			continue
 		}
 		owner = k8s.DeepCopyObject(owner)
-		err := c.Get(context.Background(), types.NamespacedName{Namespace: softOwner.Namespace, Name: softOwner.Name}, owner)
+		err := c.Get(ctx, types.NamespacedName{Namespace: softOwner.Namespace, Name: softOwner.Name}, owner)
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				// owner doesn't exit anymore
-				log.Info("Deleting secret as part of garbage collection",
+				ulog.FromContext(ctx).Info("Deleting secret as part of garbage collection",
 					"namespace", secret.Namespace, "secret_name", secret.Name,
 					"owner_kind", softOwner.Kind, "owner_namespace", softOwner.Namespace, "owner_name", softOwner.Name,
 				)
-				if err := c.Delete(context.Background(), &secret); err != nil && !apierrors.IsNotFound(err) {
+				options := client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &secret.UID}}
+				if err := c.Delete(ctx, &secret, &options); err != nil && !apierrors.IsNotFound(err) {
 					return err
 				}
 				continue
@@ -220,4 +238,9 @@ func GarbageCollectAllSoftOwnedOrphanSecrets(c k8s.Client, ownerKinds map[string
 		// owner still exists, keep the secret
 	}
 	return nil
+}
+
+// restrictedToOwnerNamespace returns true if a resource should have its owner in the same namespace, based on the kind of owner.
+func restrictedToOwnerNamespace(kind string) bool {
+	return kind != policyv1alpha1.Kind
 }

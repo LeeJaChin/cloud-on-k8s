@@ -6,15 +6,23 @@ package v1alpha1
 
 import (
 	"errors"
+	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	ulog "github.com/elastic/cloud-on-k8s/pkg/utils/log"
+	ulog "github.com/elastic/cloud-on-k8s/v2/pkg/utils/log"
+)
+
+const (
+	// webhookPath is the HTTP path for the Elastic Agent validating webhook.
+	webhookPath = "/validate-agent-k8s-elastic-co-v1alpha1-agent"
+
+	MissingPolicyIDMessage = "spec.PolicyID is empty, spec.PolicyID will become mandatory in a future release"
 )
 
 var (
@@ -26,33 +34,48 @@ var (
 
 var _ webhook.Validator = &Agent{}
 
-func (a *Agent) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(a).
-		Complete()
+func (a *Agent) GetWarnings() []string {
+	if a == nil {
+		return nil
+	}
+	if a.Spec.Mode == AgentFleetMode && len(a.Spec.PolicyID) == 0 {
+		return []string{fmt.Sprintf("%s %s/%s: %s", Kind, a.Namespace, a.Name, MissingPolicyIDMessage)}
+	}
+	return nil
 }
 
-func (a *Agent) ValidateCreate() error {
+// ValidateCreate is called by the validating webhook to validate the create operation.
+// Satisfies the webhook.Validator interface.
+func (a *Agent) ValidateCreate() (admission.Warnings, error) {
 	validationLog.V(1).Info("Validate create", "name", a.Name)
 	return a.validate(nil)
 }
 
-func (a *Agent) ValidateDelete() error {
+// ValidateDelete is called by the validating webhook to validate the delete operation.
+// Satisfies the webhook.Validator interface.
+func (a *Agent) ValidateDelete() (admission.Warnings, error) {
 	validationLog.V(1).Info("Validate delete", "name", a.Name)
-	return nil
+	return nil, nil
 }
 
-func (a *Agent) ValidateUpdate(old runtime.Object) error {
+// ValidateUpdate is called by the validating webhook to validate the update operation.
+// Satisfies the webhook.Validator interface.
+func (a *Agent) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
 	validationLog.V(1).Info("Validate update", "name", a.Name)
 	oldObj, ok := old.(*Agent)
 	if !ok {
-		return errors.New("cannot cast old object to Agent type")
+		return nil, errors.New("cannot cast old object to Agent type")
 	}
 
 	return a.validate(oldObj)
 }
 
-func (a *Agent) validate(old *Agent) error {
+// WebhookPath returns the HTTP path used by the validating webhook.
+func (a *Agent) WebhookPath() string {
+	return webhookPath
+}
+
+func (a *Agent) validate(old *Agent) (admission.Warnings, error) {
 	var errors field.ErrorList
 	if old != nil {
 		for _, uc := range updateChecks {
@@ -62,7 +85,7 @@ func (a *Agent) validate(old *Agent) error {
 		}
 
 		if len(errors) > 0 {
-			return apierrors.NewInvalid(groupKind, a.Name, errors)
+			return nil, apierrors.NewInvalid(groupKind, a.Name, errors)
 		}
 	}
 
@@ -73,7 +96,7 @@ func (a *Agent) validate(old *Agent) error {
 	}
 
 	if len(errors) > 0 {
-		return apierrors.NewInvalid(groupKind, a.Name, errors)
+		return nil, apierrors.NewInvalid(groupKind, a.Name, errors)
 	}
-	return nil
+	return nil, nil
 }

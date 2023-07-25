@@ -11,18 +11,18 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	controllerscheme "github.com/elastic/cloud-on-k8s/pkg/controller/common/scheme"
-	settings2 "github.com/elastic/cloud-on-k8s/pkg/controller/common/settings"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/label"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/nodespec"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/settings"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/sset"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	controllerscheme "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/scheme"
+	settings2 "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/settings"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/client"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/label"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/nodespec"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/settings"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/sset"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 func TestSetupMinimumMasterNodesConfig(t *testing.T) {
@@ -30,7 +30,7 @@ func TestSetupMinimumMasterNodesConfig(t *testing.T) {
 		name              string
 		nodeSpecResources nodespec.ResourcesList
 		expected          []settings.CanonicalConfig
-		pods              []runtime.Object
+		pods              []crclient.Object
 	}{
 		{
 			name: "no master nodes",
@@ -58,7 +58,7 @@ func TestSetupMinimumMasterNodesConfig(t *testing.T) {
 					esv1.DiscoveryZenMinimumMasterNodes: "4",
 				})},
 			},
-			pods: []runtime.Object{},
+			pods: []crclient.Object{},
 		},
 		{
 			name: "v7 in the spec but still have some 6.x in flight",
@@ -77,7 +77,7 @@ func TestSetupMinimumMasterNodesConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := k8s.NewFakeClient(tt.pods...)
-			err := SetupMinimumMasterNodesConfig(client, testES, tt.nodeSpecResources)
+			err := SetupMinimumMasterNodesConfig(context.Background(), client, testES, tt.nodeSpecResources)
 			require.NoError(t, err)
 			for i := 0; i < len(tt.nodeSpecResources); i++ {
 				expected, err := tt.expected[i].Render()
@@ -96,7 +96,7 @@ type fakeESClient struct {
 	client.Client
 }
 
-func (f *fakeESClient) SetMinimumMasterNodes(ctx context.Context, count int) error {
+func (f *fakeESClient) SetMinimumMasterNodes(_ context.Context, count int) error {
 	f.called = true
 	f.calledWith = count
 	return nil

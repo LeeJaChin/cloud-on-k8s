@@ -1,9 +1,7 @@
-
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  creationTimestamp: null
   name: validating-webhook-configuration
 webhooks:
 - admissionReviewVersions:
@@ -205,7 +203,30 @@ webhooks:
     - kibanas
   sideEffects: None
 - admissionReviewVersions:
-  - v1alpha1
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-logstash-k8s-elastic-co-v1alpha1-logstash
+  failurePolicy: Ignore
+  matchPolicy: Exact
+  name: elastic-logstash-validation-v1alpha1.k8s.elastic.co
+  rules:
+  - apiGroups:
+    - logstash.k8s.elastic.co
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - logstashes
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
   clientConfig:
     service:
       name: webhook-service
@@ -232,6 +253,28 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /validate-scp-k8s-elastic-co-v1alpha1-stackconfigpolicies
+  failurePolicy: Ignore
+  matchPolicy: Exact
+  name: elastic-scp-validation-v1alpha1.k8s.elastic.co
+  rules:
+  - apiGroups:
+    - stackconfigpolicy.k8s.elastic.co
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - stackconfigpolicies
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /validate-elasticsearch-k8s-elastic-co-v1-elasticsearch
   failurePolicy: Ignore
   matchPolicy: Exact
@@ -246,4 +289,26 @@ webhooks:
     - UPDATE
     resources:
     - elasticsearches
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-autoscaling-k8s-elastic-co-v1alpha1-elasticsearchautoscaler
+  failurePolicy: Ignore
+  matchPolicy: Exact
+  name: elastic-esa-validation-v1alpha1.k8s.elastic.co
+  rules:
+  - apiGroups:
+    - autoscaling.k8s.elastic.co
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - elasticsearchautoscalers
   sideEffects: None

@@ -13,16 +13,15 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	kbv1 "github.com/elastic/cloud-on-k8s/pkg/apis/kibana/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/label"
-	esuser "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/user"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	kbv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/kibana/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/label"
+	esuser "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/user"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 const (
@@ -60,7 +59,7 @@ func Test_reconcileEsUser(t *testing.T) {
 	}
 
 	type args struct {
-		initialObjects []runtime.Object
+		initialObjects []client.Object
 		kibana         kbv1.Kibana
 		es             esv1.Elasticsearch
 	}
@@ -73,7 +72,7 @@ func Test_reconcileEsUser(t *testing.T) {
 		{
 			name: "Reconcile updates existing labels",
 			args: args{
-				initialObjects: []runtime.Object{&corev1.Secret{
+				initialObjects: []client.Object{&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      userName,
 						Namespace: "default",
@@ -91,7 +90,7 @@ func Test_reconcileEsUser(t *testing.T) {
 				assert.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: userName, Namespace: "default"}, &esUser))
 				expectedLabels := map[string]string{
 					associationLabelName:       kibanaFixture.Name,
-					common.TypeLabelName:       esuser.AssociatedUserType,
+					commonv1.TypeLabelName:     esuser.AssociatedUserType,
 					label.ClusterNameLabelName: "es-foo",
 				}
 				for k, v := range expectedLabels {
@@ -123,7 +122,7 @@ func Test_reconcileEsUser(t *testing.T) {
 		{
 			name: "Existing secret but different namespace: create new",
 			args: args{
-				initialObjects: []runtime.Object{&corev1.Secret{
+				initialObjects: []client.Object{&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      userSecretName,
 						Namespace: "other",
@@ -150,7 +149,7 @@ func Test_reconcileEsUser(t *testing.T) {
 		{
 			name: "Reconcile updates existing resources",
 			args: args{
-				initialObjects: []runtime.Object{&corev1.Secret{
+				initialObjects: []client.Object{&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      userSecretName,
 						Namespace: "default",
@@ -171,7 +170,7 @@ func Test_reconcileEsUser(t *testing.T) {
 		{
 			name: "Reconcile avoids unnecessary updates",
 			args: args{
-				initialObjects: []runtime.Object{
+				initialObjects: []client.Object{
 					&corev1.Secret{
 						ObjectMeta: metav1.ObjectMeta{
 							Namespace: "default",
@@ -192,7 +191,7 @@ func Test_reconcileEsUser(t *testing.T) {
 							Labels: map[string]string{
 								associationLabelName:       kibanaFixture.Name,
 								associationLabelNamespace:  kibanaFixture.Namespace,
-								common.TypeLabelName:       esuser.AssociatedUserType,
+								commonv1.TypeLabelName:     esuser.AssociatedUserType,
 								label.ClusterNameLabelName: esFixture.Name,
 							},
 						},

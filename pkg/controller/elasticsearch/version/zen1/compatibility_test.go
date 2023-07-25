@@ -5,17 +5,18 @@
 package zen1
 
 import (
+	"context"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/label"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/sset"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/label"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/sset"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 func createStatefulSetWithVersion(version string) appsv1.StatefulSet {
@@ -35,8 +36,8 @@ var testES = esv1.Elasticsearch{
 	},
 }
 
-func createMasterPodsWithVersion(ssetName, version string, replicas int32) []runtime.Object {
-	pods := make([]runtime.Object, replicas)
+func createMasterPodsWithVersion(ssetName, version string, replicas int32) []client.Object {
+	pods := make([]client.Object, replicas)
 	for i := int32(0); i < replicas; i++ {
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
@@ -78,7 +79,7 @@ func TestIsCompatibleWithZen1(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsCompatibleWithZen1(tt.sset); got != tt.want {
+			if got := IsCompatibleWithZen1(context.Background(), tt.sset); got != tt.want {
 				t.Errorf("IsCompatibleWithZen1() = %v, want %v", got, tt.want)
 			}
 		})
@@ -126,7 +127,7 @@ func TestAtLeastOneNodeCompatibleWithZen1(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := AtLeastOneNodeCompatibleWithZen1(tt.statefulSets, tt.client, testES)
+			got, err := AtLeastOneNodeCompatibleWithZen1(context.Background(), tt.statefulSets, tt.client, testES)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("runPredicates error = %v, wantErr %v", err, tt.wantErr)
 				return

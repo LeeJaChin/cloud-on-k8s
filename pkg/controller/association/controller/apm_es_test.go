@@ -7,8 +7,8 @@ package controller
 import (
 	"testing"
 
-	apmv1 "github.com/elastic/cloud-on-k8s/pkg/apis/apm/v1"
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
+	apmv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/apm/v1"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
 )
 
 func Test_getAPMElasticsearchRoles(t *testing.T) {
@@ -74,6 +74,24 @@ func Test_getAPMElasticsearchRoles(t *testing.T) {
 				},
 			},
 			want: "eck_apm_user_role_v75,ingest_admin,apm_system",
+		},
+		{
+			name: "Test roles for APM Server v8.6.99",
+			args: args{
+				associated: &apmv1.ApmServer{
+					Spec: apmv1.ApmServerSpec{Version: "8.6.99"},
+				},
+			},
+			want: "eck_apm_user_role_v80,apm_system",
+		},
+		{
+			name: "Test roles for APM Server v8.7.0",
+			args: args{
+				associated: &apmv1.ApmServer{
+					Spec: apmv1.ApmServerSpec{Version: "8.7.0"},
+				},
+			},
+			want: "eck_apm_user_role_v87,apm_system",
 		},
 	}
 	for _, tt := range tests {

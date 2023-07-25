@@ -7,7 +7,7 @@ package beat
 import (
 	"context"
 
-	"go.elastic.co/apm"
+	"go.elastic.co/apm/v2"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -19,33 +19,30 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	beatv1beta1 "github.com/elastic/cloud-on-k8s/pkg/apis/beat/v1beta1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/association"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/beat/auditbeat"
-	beatcommon "github.com/elastic/cloud-on-k8s/pkg/controller/beat/common"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/beat/filebeat"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/beat/heartbeat"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/beat/journalbeat"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/beat/metricbeat"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/beat/otherbeat"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/beat/packetbeat"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/annotation"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/events"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/keystore"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/operator"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/reconciler"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/tracing"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/watches"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
-	ulog "github.com/elastic/cloud-on-k8s/pkg/utils/log"
+	beatv1beta1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/beat/v1beta1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/association"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/beat/auditbeat"
+	beatcommon "github.com/elastic/cloud-on-k8s/v2/pkg/controller/beat/common"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/beat/filebeat"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/beat/heartbeat"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/beat/journalbeat"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/beat/metricbeat"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/beat/otherbeat"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/beat/packetbeat"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/events"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/keystore"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/operator"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/reconciler"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/tracing"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/watches"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
+	ulog "github.com/elastic/cloud-on-k8s/v2/pkg/utils/log"
 )
 
 const (
 	controllerName = "beat-controller"
 )
-
-var log = ulog.Log.WithName(controllerName)
 
 // Add creates a new Beat Controller and adds it to the Manager with default RBAC. The Manager will set fields on the Controller
 // and Start it when the Manager is Started.
@@ -55,7 +52,7 @@ func Add(mgr manager.Manager, params operator.Parameters) error {
 	if err != nil {
 		return err
 	}
-	return addWatches(c, r)
+	return addWatches(mgr, c, r)
 }
 
 // newReconciler returns a new reconcile.Reconciler.
@@ -70,47 +67,47 @@ func newReconciler(mgr manager.Manager, params operator.Parameters) *ReconcileBe
 }
 
 // addWatches adds watches for all resources this controller cares about
-func addWatches(c controller.Controller, r *ReconcileBeat) error {
+func addWatches(mgr manager.Manager, c controller.Controller, r *ReconcileBeat) error {
 	// Watch for changes to Beat
-	if err := c.Watch(&source.Kind{Type: &beatv1beta1.Beat{}}, &handler.EnqueueRequestForObject{}); err != nil {
+	if err := c.Watch(source.Kind(mgr.GetCache(), &beatv1beta1.Beat{}), &handler.EnqueueRequestForObject{}); err != nil {
 		return err
 	}
 
 	// Watch DaemonSets
-	if err := c.Watch(&source.Kind{Type: &appsv1.DaemonSet{}}, &handler.EnqueueRequestForOwner{
-		IsController: true,
-		OwnerType:    &beatv1beta1.Beat{},
-	}); err != nil {
+	if err := c.Watch(source.Kind(mgr.GetCache(), &appsv1.DaemonSet{}), handler.EnqueueRequestForOwner(
+		mgr.GetScheme(), mgr.GetRESTMapper(),
+		&beatv1beta1.Beat{}, handler.OnlyControllerOwner(),
+	)); err != nil {
 		return err
 	}
 
 	// Watch Deployments
-	if err := c.Watch(&source.Kind{Type: &appsv1.Deployment{}}, &handler.EnqueueRequestForOwner{
-		IsController: true,
-		OwnerType:    &beatv1beta1.Beat{},
-	}); err != nil {
+	if err := c.Watch(source.Kind(mgr.GetCache(), &appsv1.Deployment{}), handler.EnqueueRequestForOwner(
+		mgr.GetScheme(), mgr.GetRESTMapper(),
+		&beatv1beta1.Beat{}, handler.OnlyControllerOwner(),
+	)); err != nil {
 		return err
 	}
 
 	// Watch Pods, to ensure `status.version` is correctly reconciled on any change.
 	// Watching Deployments or DaemonSets only may lead to missing some events.
-	if err := watches.WatchPods(c, beatcommon.NameLabelName); err != nil {
+	if err := watches.WatchPods(mgr, c, beatcommon.NameLabelName); err != nil {
 		return err
 	}
 
 	// Watch owned and soft-owned Secrets
-	if err := c.Watch(&source.Kind{Type: &corev1.Secret{}}, &handler.EnqueueRequestForOwner{
-		IsController: true,
-		OwnerType:    &beatv1beta1.Beat{},
-	}); err != nil {
+	if err := c.Watch(source.Kind(mgr.GetCache(), &corev1.Secret{}), handler.EnqueueRequestForOwner(
+		mgr.GetScheme(), mgr.GetRESTMapper(),
+		&beatv1beta1.Beat{}, handler.OnlyControllerOwner(),
+	)); err != nil {
 		return err
 	}
-	if err := watches.WatchSoftOwnedSecrets(c, beatv1beta1.Kind); err != nil {
+	if err := watches.WatchSoftOwnedSecrets(mgr, c, beatv1beta1.Kind); err != nil {
 		return err
 	}
 
 	// Watch dynamically referenced Secrets
-	return c.Watch(&source.Kind{Type: &corev1.Secret{}}, r.dynamicWatches.Secrets)
+	return c.Watch(source.Kind(mgr.GetCache(), &corev1.Secret{}), r.dynamicWatches.Secrets)
 }
 
 var _ reconcile.Reconciler = &ReconcileBeat{}
@@ -128,84 +125,84 @@ type ReconcileBeat struct {
 // Reconcile reads that state of the cluster for a Beat object and makes changes based on the state read
 // and what is in the Beat.Spec.
 func (r *ReconcileBeat) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
-	defer common.LogReconciliationRun(log, request, "beat_name", &r.iteration)()
-	tx, ctx := tracing.NewTransaction(ctx, r.Tracer, request.NamespacedName, "beat")
-	defer tracing.EndTransaction(tx)
+	ctx = common.NewReconciliationContext(ctx, &r.iteration, r.Tracer, controllerName, "beat_name", request)
+	defer common.LogReconciliationRun(ulog.FromContext(ctx))()
+	defer tracing.EndContextTransaction(ctx)
 
 	var beat beatv1beta1.Beat
-	if err := association.FetchWithAssociations(ctx, r.Client, request, &beat); err != nil {
+	err := r.Client.Get(ctx, request.NamespacedName, &beat)
+	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return reconcile.Result{}, r.onDelete(request.NamespacedName)
+			return reconcile.Result{}, r.onDelete(ctx, types.NamespacedName{
+				Namespace: request.Namespace,
+				Name:      request.Name,
+			})
 		}
 		return reconcile.Result{}, tracing.CaptureError(ctx, err)
 	}
 
-	if common.IsUnmanaged(&beat) {
-		log.Info("Object is currently not managed by this controller. Skipping reconciliation", "namespace", beat.Namespace, "beat_name", beat.Name)
+	if common.IsUnmanaged(ctx, &beat) {
+		ulog.FromContext(ctx).Info("Object is currently not managed by this controller. Skipping reconciliation", "namespace", beat.Namespace, "beat_name", beat.Name)
 		return reconcile.Result{}, nil
-	}
-
-	if compatible, err := r.isCompatible(ctx, &beat); err != nil || !compatible {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
 	}
 
 	if beat.IsMarkedForDeletion() {
 		return reconcile.Result{}, nil
 	}
 
-	if err := annotation.UpdateControllerVersion(ctx, r.Client, &beat, r.OperatorInfo.BuildInfo.Version); err != nil {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+	results, status := r.doReconcile(ctx, beat)
+	statusErr := beatcommon.UpdateStatus(ctx, beat, r.Client, status)
+	if statusErr != nil {
+		if apierrors.IsConflict(statusErr) {
+			return results.WithResult(reconcile.Result{Requeue: true}).Aggregate()
+		}
+		results.WithError(statusErr)
 	}
 
-	res, err := r.doReconcile(ctx, beat).Aggregate()
-	k8s.EmitErrorEvent(r.recorder, err, &beat, events.EventReconciliationError, "Reconciliation error: %v", err)
+	res, err := results.Aggregate()
+	k8s.MaybeEmitErrorEvent(r.recorder, err, &beat, events.EventReconciliationError, "Reconciliation error: %v", err)
 
 	return res, err
 }
 
-func (r *ReconcileBeat) doReconcile(ctx context.Context, beat beatv1beta1.Beat) *reconciler.Results {
+func (r *ReconcileBeat) doReconcile(ctx context.Context, beat beatv1beta1.Beat) (*reconciler.Results, *beatv1beta1.BeatStatus) {
 	results := reconciler.NewResult(ctx)
-	if !association.AreConfiguredIfSet(beat.GetAssociations(), r.recorder) {
-		return results
+	status := newStatus(beat)
+
+	areAssocsConfigured, err := association.AreConfiguredIfSet(ctx, beat.GetAssociations(), r.recorder)
+	if err != nil {
+		return results.WithError(err), &status
+	}
+	if !areAssocsConfigured {
+		return results, &status
 	}
 
 	// Run validation in case the webhook is disabled
 	if err := r.validate(ctx, &beat); err != nil {
-		return results.WithError(err)
+		return results.WithError(err), &status
 	}
 
-	driverResults := newDriver(ctx, r.recorder, r.Client, r.dynamicWatches, beat).Reconcile()
-	results.WithResults(driverResults)
-
-	return results
+	driverResults, updatedStatus := newDriver(ctx, r.recorder, r.Client, r.dynamicWatches, beat, status).Reconcile()
+	return results.WithResults(driverResults), updatedStatus
 }
 
 func (r *ReconcileBeat) validate(ctx context.Context, beat *beatv1beta1.Beat) error {
 	span, vctx := apm.StartSpan(ctx, "validate", tracing.SpanTypeApp)
 	defer span.End()
 
-	if err := beat.ValidateCreate(); err != nil {
-		log.Error(err, "Validation failed")
-		k8s.EmitErrorEvent(r.recorder, err, beat, events.EventReasonValidation, err.Error())
+	if _, err := beat.ValidateCreate(); err != nil {
+		ulog.FromContext(ctx).Error(err, "Validation failed")
+		k8s.MaybeEmitErrorEvent(r.recorder, err, beat, events.EventReasonValidation, err.Error())
 		return tracing.CaptureError(vctx, err)
 	}
 
 	return nil
 }
 
-func (r *ReconcileBeat) isCompatible(ctx context.Context, beat *beatv1beta1.Beat) (bool, error) {
-	selector := map[string]string{beatcommon.NameLabelName: beat.Name}
-	compat, err := annotation.ReconcileCompatibility(ctx, r.Client, beat, selector, r.OperatorInfo.BuildInfo.Version)
-	if err != nil {
-		k8s.EmitErrorEvent(r.recorder, err, beat, events.EventCompatCheckError, "Error during compatibility check: %v", err)
-	}
-	return compat, err
-}
-
-func (r *ReconcileBeat) onDelete(obj types.NamespacedName) error {
+func (r *ReconcileBeat) onDelete(ctx context.Context, obj types.NamespacedName) error {
 	r.dynamicWatches.Secrets.RemoveHandlerForKey(keystore.SecureSettingsWatchName(obj))
 	r.dynamicWatches.Secrets.RemoveHandlerForKey(common.ConfigRefWatchName(obj))
-	return reconciler.GarbageCollectSoftOwnedSecrets(r.Client, obj, beatv1beta1.Kind)
+	return reconciler.GarbageCollectSoftOwnedSecrets(ctx, r.Client, obj, beatv1beta1.Kind)
 }
 
 func newDriver(
@@ -214,13 +211,14 @@ func newDriver(
 	client k8s.Client,
 	dynamicWatches watches.DynamicWatches,
 	beat beatv1beta1.Beat,
+	status beatv1beta1.BeatStatus,
 ) beatcommon.Driver {
 	dp := beatcommon.DriverParams{
 		Client:        client,
 		Context:       ctx,
-		Logger:        log,
 		Watches:       dynamicWatches,
 		EventRecorder: recorder,
+		Status:        &status,
 		Beat:          beat,
 	}
 
@@ -240,4 +238,12 @@ func newDriver(
 	default:
 		return otherbeat.NewDriver(dp)
 	}
+}
+
+// newStatus will generate a new status, ensuring status.ObservedGeneration
+// follows the generation of the Beat object.
+func newStatus(beat beatv1beta1.Beat) beatv1beta1.BeatStatus {
+	status := beat.Status
+	status.ObservedGeneration = beat.Generation
+	return status
 }

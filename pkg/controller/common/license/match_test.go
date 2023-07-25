@@ -5,13 +5,14 @@
 package license
 
 import (
+	"context"
 	"reflect"
 	"testing"
 	"time"
 
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/chrono"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/client"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/chrono"
 )
 
 var (
@@ -225,14 +226,13 @@ func Test_bestMatchAt(t *testing.T) {
 							Type:               LicenseTypeEnterpriseTrial,
 							Issuer:             "API",
 							ClusterLicenses: []ElasticsearchLicense{
-								{License: license(twelveMonth, platinum)},
-								{License: license(twoMonth, gold)},
+								{License: license(twelveMonth, trial)},
 							},
 						},
 					},
 				},
 			},
-			want:      license(twelveMonth, platinum),
+			want:      license(twelveMonth, trial),
 			wantFound: true,
 		},
 		{
@@ -356,7 +356,7 @@ func Test_bestMatchAt(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, _, found := bestMatchAt(now, &tt.args.minVersion, tt.args.licenses, noopFilter)
+			got, _, found := bestMatchAt(context.Background(), now, &tt.args.minVersion, tt.args.licenses, noopFilter)
 			if tt.wantFound != found {
 				t.Errorf("bestMatchAt() found = %v, want %v", found, tt.wantFound)
 			}
@@ -474,7 +474,7 @@ func Test_filterValidForType(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := filterValid(now, &tt.args.minVersion, tt.args.licenses, noopFilter); !reflect.DeepEqual(got, tt.want) {
+			if got := filterValid(context.Background(), now, &tt.args.minVersion, tt.args.licenses, noopFilter); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("filterValidForType expected %v, got %v", tt.want, got)
 			}
 		})

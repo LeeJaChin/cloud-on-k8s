@@ -10,8 +10,18 @@ var (
 	defaultOptional = false
 )
 
-type VolumeLike interface {
+type VolumeLike interface { //nolint:revive
 	Name() string
 	Volume() corev1.Volume
 	VolumeMount() corev1.VolumeMount
+}
+
+func Resolve(volumeLikes []VolumeLike) ([]corev1.Volume, []corev1.VolumeMount) {
+	volumes := make([]corev1.Volume, len(volumeLikes))
+	volumeMounts := make([]corev1.VolumeMount, len(volumeLikes))
+	for i := range volumeLikes {
+		volumes[i] = volumeLikes[i].Volume()
+		volumeMounts[i] = volumeLikes[i].VolumeMount()
+	}
+	return volumes, volumeMounts
 }

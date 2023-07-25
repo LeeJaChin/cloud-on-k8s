@@ -11,10 +11,15 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	ulog "github.com/elastic/cloud-on-k8s/pkg/utils/log"
+	ulog "github.com/elastic/cloud-on-k8s/v2/pkg/utils/log"
+)
+
+const (
+	// webhookPath is the HTTP path for the Elastic Beats validating webhook.
+	webhookPath = "/validate-beat-k8s-elastic-co-v1beta1-beat"
 )
 
 var (
@@ -26,33 +31,38 @@ var (
 
 var _ webhook.Validator = &Beat{}
 
-func (b *Beat) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(b).
-		Complete()
-}
-
-func (b *Beat) ValidateCreate() error {
+// ValidateCreate is called by the validating webhook to validate the create operation.
+// Satisfies the webhook.Validator interface.
+func (b *Beat) ValidateCreate() (admission.Warnings, error) {
 	validationLog.V(1).Info("Validate create", "name", b.Name)
 	return b.validate(nil)
 }
 
-func (b *Beat) ValidateDelete() error {
+// ValidateDelete is called by the validating webhook to validate the delete operation.
+// Satisfies the webhook.Validator interface.
+func (b *Beat) ValidateDelete() (admission.Warnings, error) {
 	validationLog.V(1).Info("Validate delete", "name", b.Name)
-	return nil
+	return nil, nil
 }
 
-func (b *Beat) ValidateUpdate(old runtime.Object) error {
+// ValidateUpdate is called by the validating webhook to validate the update operation.
+// Satisfies the webhook.Validator interface.
+func (b *Beat) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
 	validationLog.V(1).Info("Validate update", "name", b.Name)
 	oldObj, ok := old.(*Beat)
 	if !ok {
-		return errors.New("cannot cast old object to Beat type")
+		return nil, errors.New("cannot cast old object to Beat type")
 	}
 
 	return b.validate(oldObj)
 }
 
-func (b *Beat) validate(old *Beat) error {
+// WebhookPath returns the HTTP path used by the validating webhook.
+func (b *Beat) WebhookPath() string {
+	return webhookPath
+}
+
+func (b *Beat) validate(old *Beat) (admission.Warnings, error) {
 	var errors field.ErrorList
 	if old != nil {
 		for _, uc := range updateChecks {
@@ -62,7 +72,7 @@ func (b *Beat) validate(old *Beat) error {
 		}
 
 		if len(errors) > 0 {
-			return apierrors.NewInvalid(groupKind, b.Name, errors)
+			return nil, apierrors.NewInvalid(groupKind, b.Name, errors)
 		}
 	}
 
@@ -73,7 +83,7 @@ func (b *Beat) validate(old *Beat) error {
 	}
 
 	if len(errors) > 0 {
-		return apierrors.NewInvalid(groupKind, b.Name, errors)
+		return nil, apierrors.NewInvalid(groupKind, b.Name, errors)
 	}
-	return nil
+	return nil, nil
 }

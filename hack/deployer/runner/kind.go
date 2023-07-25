@@ -7,7 +7,6 @@ package runner
 import (
 	"fmt"
 	"io/fs"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -16,6 +15,11 @@ import (
 	"text/template"
 
 	"github.com/blang/semver/v4"
+
+	"github.com/elastic/cloud-on-k8s/v2/hack/deployer/exec"
+	"github.com/elastic/cloud-on-k8s/v2/hack/deployer/runner/env"
+	"github.com/elastic/cloud-on-k8s/v2/hack/deployer/runner/kyverno"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/vault"
 )
 
 const (
@@ -64,14 +68,20 @@ type KindDriverFactory struct{}
 var _ DriverFactory = &KindDriverFactory{}
 
 func (k KindDriverFactory) Create(plan Plan) (Driver, error) {
+	c, err := vault.NewClient()
+	if err != nil {
+		return nil, err
+	}
 	return &KindDriver{
-		plan: plan,
+		plan:        plan,
+		vaultClient: c,
 	}, nil
 }
 
 type KindDriver struct {
 	plan        Plan
 	clientImage string
+	vaultClient vault.Client
 }
 
 func (k *KindDriver) Execute() error {
@@ -124,6 +134,12 @@ func (k *KindDriver) create() error {
 		return err
 	}
 
+	if k.plan.EnforceSecurityPolicies {
+		if err := kyverno.Install("--kubeconfig", kubeCfg.Name()); err != nil {
+			return err
+		}
+	}
+
 	return kubectl("--kubeconfig", kubeCfg.Name(), "apply", "-f", tmpStorageClass)
 }
 
@@ -132,7 +148,7 @@ func (k *KindDriver) inContainerName(file *os.File) string {
 }
 
 func kubectl(arg ...string) error {
-	output, err := NewCommand(`kubectl {{Join .Args " "}}`).AsTemplate(map[string]interface{}{"Args": arg}).Output()
+	output, err := exec.NewCommand(`kubectl {{Join .Args " "}}`).AsTemplate(map[string]interface{}{"Args": arg}).Output()
 	if err != nil && strings.Contains(output, "Error from server (NotFound)") {
 		log.Printf("Ignoring NotFound error for command: %v\n", arg)
 		return nil // ignore not found errors
@@ -146,7 +162,7 @@ func (k *KindDriver) delete() error {
 
 func (k *KindDriver) createTmpManifest() (*os.File, error) {
 	// HOME is shared between CI container and Kind container
-	f, err := ioutil.TempFile(os.Getenv("HOME"), "kind-cluster")
+	f, err := os.CreateTemp(os.Getenv("HOME"), "kind-cluster")
 	if err != nil {
 		return nil, err
 	}
@@ -183,15 +199,17 @@ func (k *KindDriver) workerNames() []string {
 	return names
 }
 
-func (k *KindDriver) cmd(args ...string) *Command {
+func (k *KindDriver) cmd(args ...string) *exec.Command {
 	params := map[string]interface{}{
-		"SharedVolume":    SharedVolumeName(),
+		"SharedVolume":    env.SharedVolumeName(),
 		"KindClientImage": k.clientImage,
 		"ClusterName":     k.plan.ClusterName,
 		"Args":            args,
 	}
 	// We need the docker socket so that kind can bootstrap
-	cmd := NewCommand(`docker run --rm \
+	// --userns=host to support Docker daemon host configured to run containers only in user namespaces
+	cmd := exec.NewCommand(`docker run --rm \
+		--userns=host \
 		-v {{.SharedVolume}}:/home \
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-e HOME=/home \
@@ -218,7 +236,7 @@ func (k *KindDriver) getKubeConfig() (*os.File, error) {
 	}
 
 	// Persist kubeconfig for reliability in following kubectl commands
-	kubeCfg, err := ioutil.TempFile("", "kubeconfig")
+	kubeCfg, err := os.CreateTemp("", "kubeconfig")
 	if err != nil {
 		return nil, err
 	}
@@ -245,12 +263,12 @@ func (k *KindDriver) GetCredentials() error {
 
 func (k *KindDriver) createTmpStorageClass() (string, error) {
 	tmpFile := filepath.Join(os.Getenv("HOME"), storageClassFileName)
-	err := ioutil.WriteFile(tmpFile, []byte(storageClass), fs.ModePerm)
+	err := os.WriteFile(tmpFile, []byte(storageClass), fs.ModePerm)
 	return tmpFile, err
 }
 
 func (k *KindDriver) ensureClientImage() error {
-	image, err := ensureClientImage(KindDriverID, k.plan.ClientVersion, k.plan.ClientBuildDefDir)
+	image, err := ensureClientImage(KindDriverID, k.vaultClient, k.plan.ClientVersion, k.plan.ClientBuildDefDir)
 	if err != nil {
 		return err
 	}

@@ -15,7 +15,6 @@ EFFECTIVE_SRC_CHART_DIR=${CHART_DIR}
 
 update_chart() {
     local ALL_CRDS="${SCRIPT_DIR}/../../config/crds/v1/all-crds.yaml"
-    local LEGACY_CRDS="${SCRIPT_DIR}/../../config/crds/v1beta1/all-crds.yaml"
 
     local VERSION
     VERSION=$(cat "${SCRIPT_DIR}/../../VERSION")
@@ -27,19 +26,14 @@ update_chart() {
 
     # Patch the CRDs to add Helm labels
     cp -f "$ALL_CRDS" "${SCRIPT_DIR}/crd_patches/v1/all-crds.yaml"
-    cp -f "$LEGACY_CRDS" "${SCRIPT_DIR}/crd_patches/v1beta1/all-crds.yaml"
-    kubectl kustomize "${SCRIPT_DIR}/crd_patches/v1" > "${SCRIPT_DIR}/templatize/all-crds.yaml"
-    kubectl kustomize "${SCRIPT_DIR}/crd_patches/v1beta1" > "${SCRIPT_DIR}/templatize/all-crds-legacy.yaml"
-
-    cat "${SCRIPT_DIR}/templatize/begin.tpl" "${SCRIPT_DIR}/templatize/all-crds.yaml" "${SCRIPT_DIR}/templatize/end.tpl" > "${CRD_CHART_DIR}/templates/all-crds.yaml"
-    cat "${SCRIPT_DIR}/templatize/begin-legacy.tpl" "${SCRIPT_DIR}/templatize/all-crds-legacy.yaml" "${SCRIPT_DIR}/templatize/end.tpl" > "${CRD_CHART_DIR}/templates/all-crds-legacy.yaml"
+    kubectl kustomize "${SCRIPT_DIR}/crd_patches/v1" > "${CRD_CHART_DIR}/templates/all-crds.yaml"
 
     # Update the versions in the main chart
-    "$SED" -E "s#appVersion: [0-9]+\.[0-9]+\.[0-9]+.*#appVersion: $VERSION#" "${CHART_DIR}/Chart.yaml"
+    "$SED" -E "s#appVersion: [0-9]+\.[0-9]+\.[0-9]+.*#appVersion: ${VERSION}#" "${CHART_DIR}/Chart.yaml"
     "$SED" -E "s#version: [0-9]+\.[0-9]+\.[0-9]+.*#version: $VERSION#" "${CHART_DIR}/Chart.yaml"
 
     # Update the versions in the CRD chart
-    "$SED" -E "s#appVersion: [0-9]+\.[0-9]+\.[0-9]+.*#appVersion: $VERSION#" "${CRD_CHART_DIR}/Chart.yaml"
+    "$SED" -E "s#appVersion: [0-9]+\.[0-9]+\.[0-9]+.*#appVersion: ${VERSION}#" "${CRD_CHART_DIR}/Chart.yaml"
     "$SED" -E "s#version: [0-9]+\.[0-9]+\.[0-9]+.*#version: $VERSION#" "${CRD_CHART_DIR}/Chart.yaml"
 }
 
@@ -79,9 +73,10 @@ while getopts "cug" OPT; do
             shift $((OPTIND-1))
             (
                 cd "$SCRIPT_DIR"
-                go build -o manifest-gen >/dev/null 2>&1
-                ./manifest-gen --source="$EFFECTIVE_SRC_CHART_DIR" generate "$@"
-                rm manifest-gen
+                tmpBinary=$(mktemp /tmp/manifest-gen.XXXXXX)
+                go build -o "$tmpBinary" >/dev/null 2>&1
+                "$tmpBinary" --source="$EFFECTIVE_SRC_CHART_DIR" generate "$@"
+                rm "$tmpBinary"
             )
             exit 0
             ;;

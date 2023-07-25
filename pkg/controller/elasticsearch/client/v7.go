@@ -12,7 +12,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
 )
 
 type clientV7 struct {
@@ -58,16 +58,42 @@ func (c *clientV7) AddVotingConfigExclusions(ctx context.Context, nodeNames []st
 	return nil
 }
 
+func (c *clientV7) GetShutdown(ctx context.Context, nodeID *string) (ShutdownResponse, error) {
+	var r ShutdownResponse
+	path := "/_nodes/shutdown"
+	if nodeID != nil {
+		path = fmt.Sprintf("/_nodes/%s/shutdown", *nodeID)
+	}
+	err := c.get(ctx, path, &r)
+	return r, err
+}
+
+func (c *clientV7) PutShutdown(ctx context.Context, nodeID string, shutdownType ShutdownType, reason string) error {
+	request := ShutdownRequest{
+		Type:   shutdownType,
+		Reason: reason,
+	}
+	return c.put(ctx, fmt.Sprintf("/_nodes/%s/shutdown", nodeID), request, nil)
+}
+
+func (c *clientV7) DeleteShutdown(ctx context.Context, nodeID string) error {
+	return c.delete(ctx, fmt.Sprintf("/_nodes/%s/shutdown", nodeID))
+}
+
 func (c *clientV7) DeleteVotingConfigExclusions(ctx context.Context, waitForRemoval bool) error {
 	path := fmt.Sprintf(
 		"/_cluster/voting_config_exclusions?wait_for_removal=%s",
 		strconv.FormatBool(waitForRemoval),
 	)
 
-	if err := c.delete(ctx, path, nil, nil); err != nil {
+	if err := c.delete(ctx, path); err != nil {
 		return errors.Wrap(err, "unable to delete /_cluster/voting_config_exclusions")
 	}
 	return nil
+}
+
+func (c *clientV7) GetClusterState(_ context.Context) (ClusterState, error) {
+	return ClusterState{}, errors.New("cluster state is not supported in Elasticsearch 7.x")
 }
 
 func (c *clientV7) Equal(c2 Client) bool {

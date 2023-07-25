@@ -10,14 +10,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/go-test/deep"
 
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/client"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
 )
 
 const (
@@ -91,8 +91,8 @@ func (dc *DataIntegrityCheck) Init() error {
 		return err
 	}
 	// delete the index but ignore errors (e.g. if it did not exist yet)
-	resp, err := esClient.Request(context.Background(), indexDeletion)
-	if err == nil {
+	resp, _ := esClient.Request(context.Background(), indexDeletion)
+	if resp != nil {
 		resp.Body.Close()
 	}
 
@@ -147,7 +147,7 @@ func (dc *DataIntegrityCheck) Verify() error {
 	}
 	defer response.Body.Close()
 	var results client.SearchResults
-	resultBytes, err := ioutil.ReadAll(response.Body)
+	resultBytes, err := io.ReadAll(response.Body)
 	if err != nil {
 		return err
 	}

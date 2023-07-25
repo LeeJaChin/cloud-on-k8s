@@ -2,7 +2,7 @@
 // or more contributor license agreements. Licensed under the Elastic License 2.0;
 // you may not use this file except in compliance with the Elastic License 2.0.
 
-// +build apm e2e
+//go:build apm || e2e
 
 package apm
 
@@ -11,19 +11,20 @@ import (
 	"fmt"
 	"testing"
 
-	apmv1 "github.com/elastic/cloud-on-k8s/pkg/apis/apm/v1"
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/services"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/apmserver"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/elasticsearch"
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+
+	apmv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/apm/v1"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/services"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/apmserver"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/elasticsearch"
 )
 
 const (
@@ -64,7 +65,8 @@ func TestUpdateConfiguration(t *testing.T) {
 		WithNamespace(namespace).
 		WithElasticsearchRef(esBuilder.Ref()).
 		WithVersion(test.Ctx().ElasticStackVersion).
-		WithRestrictedSecurityContext()
+		WithRestrictedSecurityContext().
+		WithoutIntegrationCheck()
 
 	apmName := apmBuilder.ApmServer.Name
 	apmNamespacedName := types.NamespacedName{
@@ -101,7 +103,7 @@ func TestUpdateConfiguration(t *testing.T) {
 					if config.Output.Elasticsearch.Hosts[0] != esHost {
 						return fmt.Errorf("expected es host %s but got %s", esHost, config.Output.Elasticsearch.Hosts[0])
 					}
-					if config.Output.Elasticsearch.CompressionLevel != 0{ // CompressionLevel is not set by default
+					if config.Output.Elasticsearch.CompressionLevel != 0 { // CompressionLevel is not set by default
 						return fmt.Errorf("expected compression level 0 but got %d", config.Output.Elasticsearch.CompressionLevel)
 					}
 					return nil

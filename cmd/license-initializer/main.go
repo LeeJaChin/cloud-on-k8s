@@ -6,15 +6,16 @@ package main
 
 import (
 	"fmt"
-	"html/template"
 	"io"
-	"io/ioutil"
 	"os"
 	"strings"
+	"text/template"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/vault"
 )
 
 const (
@@ -30,19 +31,30 @@ var Cmd = &cobra.Command{
 		if pubkeyFile == "" {
 			handleErr(fmt.Errorf("%s is a required environment variable pointing to a DER encoded public key", pubKeyFlag))
 		}
+
+		c := vault.NewClientProvider()
+
+		bytes, err := vault.ReadFile(c, vault.SecretFile{
+			Name:          pubkeyFile,
+			Path:          "license",
+			FieldResolver: vault.LicensePubKeyPrefix("pubkey"),
+			Base64Encoded: true,
+		})
+		handleErr(errors.Wrapf(err, "Failed to read %v", pubkeyFile))
+
 		outFile := viper.GetString(outFileFlag)
 		var out io.Writer
 		if outFile == "" {
 			out = os.Stdout
 		} else {
 			file, err := os.Create(outFile)
-			if err != nil {
-				handleErr(err)
-			}
+			handleErr(err)
+
 			defer file.Close()
 			out = file
 		}
-		generateSrc(pubkeyFile, out)
+
+		generateSrc(bytes, out)
 	},
 }
 
@@ -66,7 +78,7 @@ func main() {
 	handleErr(Cmd.Execute())
 }
 
-func generateSrc(pubkeyFile string, out io.Writer) {
+func generateSrc(bytes []byte, out io.Writer) {
 	type params struct {
 		Bytes       []byte
 		ShouldBreak func(int) bool
@@ -85,24 +97,14 @@ var publicKeyBytes = []byte{
 {{- end}}
 }
 `
-
-	bytes, err := ioutil.ReadFile(pubkeyFile)
-	if err != nil {
-		handleErr(errors.Wrapf(err, "Failed to read %v", pubkeyFile))
-	}
-	if len(bytes) == 0 {
-		handleErr(errors.Wrapf(err, "%v shouldn't have size 0", pubkeyFile))
-	}
 	t := template.Must(template.New("license").Parse(tmpl))
-	err = t.Execute(out, params{
+	err := t.Execute(out, params{
 		Bytes: bytes,
 		ShouldBreak: func(i int) bool {
 			return (i+1)%8 == 0
 		},
 	})
-	if err != nil {
-		handleErr(errors.Wrap(err, "Failed to write template"))
-	}
+	handleErr(errors.Wrap(err, "Failed to write template"))
 }
 
 func handleErr(err error) {

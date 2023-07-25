@@ -5,6 +5,7 @@
 package stackmon
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -12,11 +13,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	kbv1 "github.com/elastic/cloud-on-k8s/pkg/apis/kibana/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/defaults"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/stackmon/monitoring"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	kbv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/kibana/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/defaults"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/stackmon/monitoring"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 func TestWithMonitoring(t *testing.T) {
@@ -48,9 +49,19 @@ func TestWithMonitoring(t *testing.T) {
 	}
 	fakeEsHTTPCertSecret := corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "sample-es-http-certs-public", Namespace: "aerospace"},
-		Data:       map[string][]byte{"ca.crt": []byte("7H1515N074r341C3r71F1C473")},
+		Data: map[string][]byte{
+			"tls.crt": []byte("7H1515N074r341C3r71F1C473"),
+			"ca.crt":  []byte("7H1515N074r341C3r71F1C473"),
+		},
 	}
-	fakeClient := k8s.NewFakeClient(&fakeElasticUserSecret, &fakeMetricsBeatUserSecret, &fakeLogsBeatUserSecret, &fakeEsHTTPCertSecret)
+	fakeKbHTTPCertSecret := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "sample-kb-http-certs-public", Namespace: "aerospace"},
+		Data: map[string][]byte{
+			"tls.crt": []byte("7H1515N074r341C3r71F1C473"),
+			"ca.crt":  []byte("7H1515N074r341C3r71F1C473"),
+		},
+	}
+	fakeClient := k8s.NewFakeClient(&fakeElasticUserSecret, &fakeMetricsBeatUserSecret, &fakeLogsBeatUserSecret, &fakeEsHTTPCertSecret, &fakeKbHTTPCertSecret)
 
 	monitoringAssocConf := commonv1.AssociationConf{
 		AuthSecretName: "sample-observability-monitoring-beat-es-mon-user",
@@ -91,8 +102,8 @@ func TestWithMonitoring(t *testing.T) {
 				return sampleKb
 			},
 			containersLength:       2,
-			podVolumesLength:       3,
-			beatVolumeMountsLength: 3,
+			podVolumesLength:       4,
+			beatVolumeMountsLength: 4,
 		},
 		{
 			name: "with logs monitoring",
@@ -103,8 +114,8 @@ func TestWithMonitoring(t *testing.T) {
 				return sampleKb
 			},
 			containersLength:       2,
-			podVolumesLength:       3,
-			beatVolumeMountsLength: 3,
+			podVolumesLength:       4,
+			beatVolumeMountsLength: 4,
 		},
 		{
 			name: "with metrics and logs monitoring",
@@ -116,8 +127,8 @@ func TestWithMonitoring(t *testing.T) {
 				return sampleKb
 			},
 			containersLength:       3,
-			podVolumesLength:       5,
-			beatVolumeMountsLength: 3,
+			podVolumesLength:       7,
+			beatVolumeMountsLength: 4,
 		},
 		{
 			name: "with metrics and logs monitoring with different es ref",
@@ -129,8 +140,8 @@ func TestWithMonitoring(t *testing.T) {
 				return sampleKb
 			},
 			containersLength:       3,
-			podVolumesLength:       6,
-			beatVolumeMountsLength: 3,
+			podVolumesLength:       8,
+			beatVolumeMountsLength: 4,
 		},
 	}
 
@@ -138,7 +149,7 @@ func TestWithMonitoring(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			kb := tc.kb()
 			builder := defaults.NewPodTemplateBuilder(corev1.PodTemplateSpec{}, kbv1.KibanaContainerName)
-			_, err := WithMonitoring(fakeClient, builder, kb)
+			_, err := WithMonitoring(context.Background(), fakeClient, builder, kb)
 			assert.NoError(t, err)
 
 			assert.Equal(t, tc.containersLength, len(builder.PodTemplate.Spec.Containers))

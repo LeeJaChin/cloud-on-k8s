@@ -14,7 +14,7 @@ import (
 	udiff "github.com/elastic/go-ucfg/diff"
 	uyaml "github.com/elastic/go-ucfg/yaml"
 	"github.com/pkg/errors"
-	yaml "gopkg.in/yaml.v2"
+	yaml "gopkg.in/yaml.v3"
 )
 
 // CanonicalConfig contains configuration for an Elastic resource ("elasticsearch.yml" or "kibana.yml"),
@@ -118,6 +118,11 @@ func (c *CanonicalConfig) SetStrings(key string, vals ...string) error {
 	return nil
 }
 
+// String returns a string value for the given key
+func (c *CanonicalConfig) String(key string) (string, error) {
+	return c.asUCfg().String(key, -1, Options...)
+}
+
 // Unpack returns a typed config given a struct pointer.
 func (c *CanonicalConfig) Unpack(cfg interface{}) error {
 	if reflect.ValueOf(cfg).Kind() != reflect.Ptr {
@@ -153,21 +158,28 @@ func (c *CanonicalConfig) HasKeys(keys []string) []string {
 	return has
 }
 
+// HasChildConfig returns true if c has a child config object below key.
+func (c *CanonicalConfig) HasChildConfig(key string) bool {
+	if c == nil {
+		return false
+	}
+	// We are expecting two kinds of error here:
+	// type mismatch: if key is pointing to a primitive value that means we don't have a child config
+	// missing path: if the key does not exist in the config we also do not have a child config
+	// There should be no other errors thrown by ucfg thus there is no error return type in this function.
+	_, err := c.asUCfg().Child(key, -1, Options...)
+	return err == nil
+}
+
 // Render returns the content of the configuration file,
 // with fields sorted alphabetically
-func (c *CanonicalConfig) Render(rs ...Replacement) ([]byte, error) {
+func (c *CanonicalConfig) Render() ([]byte, error) {
 	if c == nil {
 		return []byte{}, nil
 	}
-
 	var out untypedDict
-	err := c.asUCfg().Unpack(&out)
-	if err != nil {
+	if err := c.asUCfg().Unpack(&out); err != nil {
 		return []byte{}, err
-	}
-
-	for _, r := range rs {
-		r.apply(out)
 	}
 	return yaml.Marshal(out)
 }

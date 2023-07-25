@@ -5,6 +5,7 @@
 package watches
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -13,9 +14,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	kbv1 "github.com/elastic/cloud-on-k8s/pkg/apis/kibana/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/reconciler"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	kbv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/kibana/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/reconciler"
 )
 
 func Test_reconcileReqForSoftOwner(t *testing.T) {
@@ -75,7 +76,7 @@ func Test_reconcileReqForSoftOwner(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			requests := toRequestsFunc(&tt.secret)
+			requests := toRequestsFunc(context.Background(), &tt.secret)
 			require.Equal(t, tt.wantReconcileRequests, requests)
 		})
 	}

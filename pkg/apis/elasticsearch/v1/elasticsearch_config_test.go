@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/utils/pointer"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/compare"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/compare"
 )
 
 func TestConfig_RoleDefaults(t *testing.T) {
@@ -30,11 +30,11 @@ func TestConfig_RoleDefaults(t *testing.T) {
 			name: "empty equals defaults",
 			args: args{},
 			wantCfg: Node{
-				Master:    pointer.BoolPtr(true),
-				Data:      pointer.BoolPtr(true),
-				Ingest:    pointer.BoolPtr(true),
-				ML:        pointer.BoolPtr(true),
-				Transform: pointer.BoolPtr(false),
+				Master:    pointer.Bool(true),
+				Data:      pointer.Bool(true),
+				Ingest:    pointer.Bool(true),
+				ML:        pointer.Bool(true),
+				Transform: pointer.Bool(false),
 			},
 		},
 		{
@@ -47,11 +47,11 @@ func TestConfig_RoleDefaults(t *testing.T) {
 				},
 			},
 			wantCfg: Node{
-				Master:    pointer.BoolPtr(true),
-				Data:      pointer.BoolPtr(true),
-				Ingest:    pointer.BoolPtr(true),
-				ML:        pointer.BoolPtr(true),
-				Transform: pointer.BoolPtr(false),
+				Master:    pointer.Bool(true),
+				Data:      pointer.Bool(true),
+				Ingest:    pointer.Bool(true),
+				ML:        pointer.Bool(true),
+				Transform: pointer.Bool(false),
 			},
 		},
 		{
@@ -64,11 +64,11 @@ func TestConfig_RoleDefaults(t *testing.T) {
 				},
 			},
 			wantCfg: Node{
-				Master:    pointer.BoolPtr(true),
-				Data:      pointer.BoolPtr(false),
-				Ingest:    pointer.BoolPtr(true),
-				ML:        pointer.BoolPtr(true),
-				Transform: pointer.BoolPtr(false),
+				Master:    pointer.Bool(true),
+				Data:      pointer.Bool(false),
+				Ingest:    pointer.Bool(true),
+				ML:        pointer.Bool(true),
+				Transform: pointer.Bool(false),
 			},
 		},
 		{
@@ -77,10 +77,10 @@ func TestConfig_RoleDefaults(t *testing.T) {
 				ver: version.From(7, 7, 0),
 			},
 			wantCfg: Node{
-				Master: pointer.BoolPtr(true),
-				Data:   pointer.BoolPtr(true),
-				Ingest: pointer.BoolPtr(true),
-				ML:     pointer.BoolPtr(true),
+				Master: pointer.Bool(true),
+				Data:   pointer.Bool(true),
+				Ingest: pointer.Bool(true),
+				ML:     pointer.Bool(true),
 			},
 		},
 		{
@@ -96,10 +96,10 @@ func TestConfig_RoleDefaults(t *testing.T) {
 				ver: version.From(7, 7, 0),
 			},
 			wantCfg: Node{
-				Master: pointer.BoolPtr(true),
-				Data:   pointer.BoolPtr(false),
-				Ingest: pointer.BoolPtr(true),
-				ML:     pointer.BoolPtr(true),
+				Master: pointer.Bool(true),
+				Data:   pointer.Bool(false),
+				Ingest: pointer.Bool(true),
+				ML:     pointer.Bool(true),
 			},
 		},
 		{
@@ -114,11 +114,11 @@ func TestConfig_RoleDefaults(t *testing.T) {
 				ver: version.From(7, 7, 0),
 			},
 			wantCfg: Node{
-				Master:    pointer.BoolPtr(true),
-				Data:      pointer.BoolPtr(false),
-				Ingest:    pointer.BoolPtr(true),
-				ML:        pointer.BoolPtr(true),
-				Transform: pointer.BoolPtr(true),
+				Master:    pointer.Bool(true),
+				Data:      pointer.Bool(false),
+				Ingest:    pointer.Bool(true),
+				ML:        pointer.Bool(true),
+				Transform: pointer.Bool(true),
 			},
 		},
 	}
@@ -160,9 +160,9 @@ var expectedJSONized = commonv1.Config{
 	},
 }
 
-func TestConfig_HasRole(t *testing.T) {
+var (
 	// roles that are applied by default (everything except voting_only)
-	defaultRoles := []NodeRole{
+	defaultRoles = []NodeRole{
 		DataColdRole,
 		DataContentRole,
 		DataHotRole,
@@ -175,9 +175,61 @@ func TestConfig_HasRole(t *testing.T) {
 		TransformRole,
 	}
 
-	allRoles := append([]NodeRole(nil), defaultRoles...)
-	allRoles = append(allRoles, VotingOnlyRole)
+	allRoles = append([]NodeRole{VotingOnlyRole}, defaultRoles...)
+)
 
+func TestConfig_HasRole(t *testing.T) {
+	testCases := []struct {
+		name      string
+		node      *Node
+		wantRoles []NodeRole
+	}{
+		{
+			name:      "master and data",
+			node:      &Node{Roles: []string{"master", "data"}},
+			wantRoles: []NodeRole{MasterRole, DataContentRole, DataRole, DataHotRole, DataWarmRole, DataColdRole, DataFrozenRole},
+		},
+		{
+			name:      "master and data_content",
+			node:      &Node{Roles: []string{"master", "data_content"}},
+			wantRoles: []NodeRole{MasterRole, DataContentRole},
+		},
+		{
+			name:      "data_hot and data_warm only",
+			node:      &Node{Roles: []string{"data_hot", "data_warm"}},
+			wantRoles: []NodeRole{DataHotRole, DataWarmRole},
+		},
+		{
+			name:      "node.roles (ingest only)",
+			node:      &Node{Roles: []string{"ingest"}},
+			wantRoles: []NodeRole{IngestRole},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			wantRolesSet := make(map[NodeRole]struct{}, len(tc.wantRoles))
+
+			// check that the node has the required roles
+			for _, r := range tc.wantRoles {
+				wantRolesSet[r] = struct{}{}
+
+				require.True(t, tc.node.HasRole(r), "Missing wanted role [%s]", r)
+			}
+
+			// check that the node does not have any other roles
+			for _, r := range allRoles {
+				if _, exists := wantRolesSet[r]; exists {
+					continue
+				}
+
+				require.False(t, tc.node.HasRole(r), "Unexpected role [%s]", r)
+			}
+		})
+	}
+}
+
+func TestConfig_IsConfiguredWithRole(t *testing.T) {
 	testCases := []struct {
 		name      string
 		node      *Node
@@ -195,43 +247,43 @@ func TestConfig_HasRole(t *testing.T) {
 		{
 			name: "node role attributes (all)",
 			node: &Node{
-				Master:              pointer.BoolPtr(true),
-				Data:                pointer.BoolPtr(true),
-				Ingest:              pointer.BoolPtr(true),
-				ML:                  pointer.BoolPtr(true),
-				Transform:           pointer.BoolPtr(true),
-				RemoteClusterClient: pointer.BoolPtr(true),
+				Master:              pointer.Bool(true),
+				Data:                pointer.Bool(true),
+				Ingest:              pointer.Bool(true),
+				ML:                  pointer.Bool(true),
+				Transform:           pointer.Bool(true),
+				RemoteClusterClient: pointer.Bool(true),
 			},
 			wantRoles: defaultRoles,
 		},
 		{
 			name: "node role attributes (no data)",
 			node: &Node{
-				Data: pointer.BoolPtr(false),
+				Data: pointer.Bool(false),
 			},
 			wantRoles: []NodeRole{IngestRole, MLRole, MasterRole, RemoteClusterClientRole},
 		},
 		{
 			name: "node role attributes (ingest only)",
 			node: &Node{
-				Master:     pointer.BoolPtr(false),
-				Data:       pointer.BoolPtr(false),
-				Ingest:     pointer.BoolPtr(true),
-				ML:         pointer.BoolPtr(false),
-				Transform:  pointer.BoolPtr(false),
-				VotingOnly: pointer.BoolPtr(false),
+				Master:     pointer.Bool(false),
+				Data:       pointer.Bool(false),
+				Ingest:     pointer.Bool(true),
+				ML:         pointer.Bool(false),
+				Transform:  pointer.Bool(false),
+				VotingOnly: pointer.Bool(false),
 			},
 			wantRoles: []NodeRole{IngestRole, RemoteClusterClientRole},
 		},
 		{
 			name: "mixed node.roles and node role attributes",
 			node: &Node{
-				Master:     pointer.BoolPtr(false),
-				Data:       pointer.BoolPtr(false),
-				Ingest:     pointer.BoolPtr(true),
-				ML:         pointer.BoolPtr(false),
-				Transform:  pointer.BoolPtr(false),
-				VotingOnly: pointer.BoolPtr(false),
+				Master:     pointer.Bool(false),
+				Data:       pointer.Bool(false),
+				Ingest:     pointer.Bool(true),
+				ML:         pointer.Bool(false),
+				Transform:  pointer.Bool(false),
+				VotingOnly: pointer.Bool(false),
 				Roles:      []string{"master"},
 			},
 			wantRoles: []NodeRole{MasterRole},
@@ -278,7 +330,7 @@ func TestConfig_HasRole(t *testing.T) {
 			for _, r := range tc.wantRoles {
 				wantRolesSet[r] = struct{}{}
 
-				require.True(t, tc.node.HasRole(r), "Missing wanted role [%s]", r)
+				require.True(t, tc.node.IsConfiguredWithRole(r), "Missing wanted role [%s]", r)
 			}
 
 			// check that the node does not have any other roles
@@ -287,7 +339,7 @@ func TestConfig_HasRole(t *testing.T) {
 					continue
 				}
 
-				require.False(t, tc.node.HasRole(r), "Unexpected role [%s]", r)
+				require.False(t, tc.node.IsConfiguredWithRole(r), "Unexpected role [%s]", r)
 			}
 		})
 	}
@@ -376,8 +428,8 @@ func TestConfig_Unpack(t *testing.T) {
 			},
 			want: ElasticsearchSettings{
 				Node: &Node{
-					Master: pointer.BoolPtr(false),
-					Data:   pointer.BoolPtr(true),
+					Master: pointer.Bool(false),
+					Data:   pointer.Bool(true),
 				},
 				Cluster: ClusterSettings{
 					InitialMasterNodes: []string{"a", "b"},

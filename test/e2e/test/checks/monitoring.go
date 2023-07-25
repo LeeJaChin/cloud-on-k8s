@@ -8,17 +8,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strconv"
 
 	"k8s.io/apimachinery/pkg/types"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	esClient "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/elasticsearch"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	esClient "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/client"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/elasticsearch"
 )
 
 type Monitored interface {
@@ -36,6 +36,13 @@ func MonitoredSteps(monitored Monitored, k8sClient *test.K8sClient) test.StepLis
 	}.Steps()
 }
 
+func BeatsMonitoredStep(monitored Monitored, k8sClient *test.K8sClient) test.Step {
+	return stackMonitoringChecks{
+		monitored: monitored,
+		k8sClient: k8sClient,
+	}.CheckMonitoringMetricsIndex()
+}
+
 // stackMonitoringChecks tests that the monitored resource pods have 3 containers ready and that there are documents indexed in the beat indexes
 // of the monitoring Elasticsearch clusters.
 type stackMonitoringChecks struct {
@@ -45,13 +52,13 @@ type stackMonitoringChecks struct {
 
 func (c stackMonitoringChecks) Steps() test.StepList {
 	return test.StepList{
-		c.CheckBeatSidecars(),
+		c.CheckBeatSidecarsInElasticsearch(),
 		c.CheckMonitoringMetricsIndex(),
 		c.CheckFilebeatIndex(),
 	}
 }
 
-func (c stackMonitoringChecks) CheckBeatSidecars() test.Step {
+func (c stackMonitoringChecks) CheckBeatSidecarsInElasticsearch() test.Step {
 	return test.Step{
 		Name: "Check that beat sidecars are running",
 		Test: test.Eventually(func() error {
@@ -145,7 +152,7 @@ func containsDocuments(esClient esClient.Client, indexPattern string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	resultBytes, err := ioutil.ReadAll(resp.Body)
+	resultBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}

@@ -15,9 +15,9 @@ import (
 	"github.com/go-logr/logr"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	logutil "github.com/elastic/cloud-on-k8s/pkg/utils/log"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/stringsutil"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	logutil "github.com/elastic/cloud-on-k8s/v2/pkg/utils/log"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/stringsutil"
 )
 
 const (
@@ -25,7 +25,7 @@ const (
 	ArchARMTag = "arch:arm"
 )
 
-var defaultElasticStackVersion = LatestVersion7x
+var defaultElasticStackVersion = LatestReleasedVersion7x
 
 var (
 	testContextPath = flag.String("testContextPath", "", "Path to the test context file")
@@ -84,6 +84,14 @@ func defaultContext() Context {
 	}
 }
 
+type ElasticStackImageDefinition struct {
+	Kind    string `json:"kind"`
+	Image   string `json:"image"`
+	Version string `json:"version"`
+}
+
+type ElasticStackImages []ElasticStackImageDefinition
+
 // Context encapsulates data about a specific test run
 type Context struct {
 	Operator              NamespaceOperator `json:"operator"`
@@ -106,13 +114,17 @@ type Context struct {
 	Local                 bool              `json:"local"`
 	IgnoreWebhookFailures bool              `json:"ignore_webhook_failures"`
 	OcpCluster            bool              `json:"ocp_cluster"`
-	Ocp3Cluster           bool              `json:"ocp3_cluster"`
 	Pipeline              string            `json:"pipeline"`
 	BuildNumber           string            `json:"build_number"`
 	Provider              string            `json:"provider"`
 	ClusterName           string            `json:"clusterName"`
 	KubernetesVersion     version.Version   `json:"kubernetes_version"`
+	GCPCredentialsPath    string            `json:"gcp_credentials_path"`
+	AutopilotCluster      bool              `json:"autopilot_cluster"`
 	TestEnvTags           []string          `json:"test_tags"`
+	E2ETags               string            `json:"e2e_tags"`
+	LogToFile             bool              `json:"log_to_file"`
+	ArtefactsDir          string            `json:"artefacts_dir"`
 }
 
 // ManagedNamespace returns the nth managed namespace.

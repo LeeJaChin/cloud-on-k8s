@@ -15,12 +15,11 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	ulog "github.com/elastic/cloud-on-k8s/pkg/utils/log"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/stringsutil"
+	commonhttp "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/http"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	ulog "github.com/elastic/cloud-on-k8s/v2/pkg/utils/log"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/stringsutil"
 )
-
-var log = ulog.Log.WithName("elasticsearch-client")
 
 type baseClient struct {
 	User     BasicAuth
@@ -29,6 +28,7 @@ type baseClient struct {
 	es       types.NamespacedName
 	caCerts  []*x509.Certificate
 	version  version.Version
+	debug    bool
 }
 
 // Close idle connections in the underlying http client.
@@ -45,8 +45,8 @@ func (c *baseClient) Close() {
 
 func (c *baseClient) equal(c2 *baseClient) bool {
 	// handle nil case
-	if c2 == nil && c != nil {
-		return false
+	if c2 == nil {
+		return c == nil
 	}
 	// compare ca certs
 	if len(c.caCerts) != len(c2.caCerts) {
@@ -70,7 +70,7 @@ func (c *baseClient) doRequest(context context.Context, request *http.Request) (
 		withContext.SetBasicAuth(c.User.Name, c.User.Password)
 	}
 
-	log.V(1).Info(
+	ulog.FromContext(context).V(1).Info(
 		"Elasticsearch HTTP request",
 		"method", request.Method,
 		"url", request.URL.Redacted(),
@@ -84,7 +84,7 @@ func (c *baseClient) doRequest(context context.Context, request *http.Request) (
 
 	// Check HTTP code in Elasticsearch response.
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return response, newDecoratedHTTPError(request, newAPIError(response))
+		return response, newDecoratedHTTPError(request, newAPIError(context, response))
 	}
 
 	return response, nil
@@ -102,8 +102,8 @@ func (c *baseClient) post(ctx context.Context, pathWithQuery string, in, out int
 	return c.request(ctx, http.MethodPost, pathWithQuery, in, out, nil)
 }
 
-func (c *baseClient) delete(ctx context.Context, pathWithQuery string, in, out interface{}) error {
-	return c.request(ctx, http.MethodDelete, pathWithQuery, in, out, nil)
+func (c *baseClient) delete(ctx context.Context, pathWithQuery string) error {
+	return c.request(ctx, http.MethodDelete, pathWithQuery, nil, nil, nil)
 }
 
 // request performs a new http request
@@ -131,6 +131,18 @@ func (c *baseClient) request(
 	request, err := http.NewRequest(method, stringsutil.Concat(c.Endpoint, pathWithQuery), body) //nolint:noctx
 	if err != nil {
 		return err
+	}
+
+	// Sets headers allowing ES to distinguish between deprecated APIs used internally and by the user
+	if request.Header == nil {
+		request.Header = make(http.Header)
+	}
+	request.Header.Set(commonhttp.InternalProductRequestHeaderKey, commonhttp.InternalProductRequestHeaderValue)
+
+	if c.debug {
+		q := request.URL.Query()
+		q.Add("error_trace", "true")
+		request.URL.RawQuery = q.Encode()
 	}
 
 	var skippedErr error
@@ -174,4 +186,20 @@ func versioned(b *baseClient, v version.Version) Client {
 	default:
 		return &v6
 	}
+}
+
+func (c *baseClient) URL() string {
+	return c.Endpoint
+}
+
+func (c *baseClient) HasProperties(version version.Version, user BasicAuth, url string, caCerts []*x509.Certificate) bool {
+	if len(c.caCerts) != len(caCerts) {
+		return false
+	}
+	for i := range c.caCerts {
+		if !c.caCerts[i].Equal(caCerts[i]) {
+			return false
+		}
+	}
+	return c.version.Equals(version) && c.User == user && c.Endpoint == url
 }

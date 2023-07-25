@@ -11,39 +11,42 @@ import (
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	ulog "github.com/elastic/cloud-on-k8s/pkg/utils/log"
+	ulog "github.com/elastic/cloud-on-k8s/v2/pkg/utils/log"
+)
+
+const (
+	// webhookPath is the HTTP path for the Elasticsearch validating webhook.
+	webhookPath = "/validate-elasticsearch-k8s-elastic-co-v1beta1-elasticsearch"
 )
 
 // +kubebuilder:webhook:path=/validate-elasticsearch-k8s-elastic-co-v1beta1-elasticsearch,mutating=false,failurePolicy=ignore,groups=elasticsearch.k8s.elastic.co,resources=elasticsearches,verbs=create;update,versions=v1beta1,name=elastic-es-validation-v1beta1.k8s.elastic.co,sideEffects=None,admissionReviewVersions=v1;v1beta1,matchPolicy=Exact
-
-func (es *Elasticsearch) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(es).
-		Complete()
-}
 
 var eslog = ulog.Log.WithName("es-validation")
 
 var _ webhook.Validator = &Elasticsearch{}
 
-func (es *Elasticsearch) ValidateCreate() error {
+// ValidateCreate is called by the validating webhook to validate the create operation.
+// Satisfies the webhook.Validator interface.
+func (es *Elasticsearch) ValidateCreate() (admission.Warnings, error) {
 	eslog.V(1).Info("validate create", "name", es.Name)
 	return es.validateElasticsearch()
 }
 
-// ValidateDelete is required to implement webhook.Validator, but we do not actually validate deletes
-func (es *Elasticsearch) ValidateDelete() error {
-	return nil
+// ValidateDelete is required to implement webhook.Validator, but we do not actually validate deletes.
+func (es *Elasticsearch) ValidateDelete() (admission.Warnings, error) {
+	return nil, nil
 }
 
-func (es *Elasticsearch) ValidateUpdate(old runtime.Object) error {
+// ValidateUpdate is called by the validating webhook to validate the update operation.
+// Satisfies the webhook.Validator interface.
+func (es *Elasticsearch) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
 	eslog.V(1).Info("validate update", "name", es.Name)
 	oldEs, ok := old.(*Elasticsearch)
 	if !ok {
-		return errors.New("cannot cast old object to Elasticsearch type")
+		return nil, errors.New("cannot cast old object to Elasticsearch type")
 	}
 
 	var errs field.ErrorList
@@ -53,21 +56,25 @@ func (es *Elasticsearch) ValidateUpdate(old runtime.Object) error {
 		}
 	}
 	if len(errs) > 0 {
-		return apierrors.NewInvalid(
+		return nil, apierrors.NewInvalid(
 			schema.GroupKind{Group: "elasticsearch.k8s.elastic.co", Kind: "Elasticsearch"},
 			es.Name, errs)
 	}
 	return es.validateElasticsearch()
 }
 
-func (es *Elasticsearch) validateElasticsearch() error {
-	errs := es.check(validations)
-	if len(errs) > 0 {
-		return apierrors.NewInvalid(
+// WebhookPath returns the HTTP path used by the validating webhook.
+func (es *Elasticsearch) WebhookPath() string {
+	return webhookPath
+}
+
+func (es *Elasticsearch) validateElasticsearch() (admission.Warnings, error) {
+	if errs := es.check(validations); len(errs) > 0 {
+		return nil, apierrors.NewInvalid(
 			schema.GroupKind{Group: "elasticsearch.k8s.elastic.co", Kind: "Elasticsearch"},
 			es.Name,
 			errs,
 		)
 	}
-	return nil
+	return nil, nil
 }

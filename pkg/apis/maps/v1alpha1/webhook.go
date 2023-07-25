@@ -9,12 +9,17 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	ulog "github.com/elastic/cloud-on-k8s/pkg/utils/log"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	ulog "github.com/elastic/cloud-on-k8s/v2/pkg/utils/log"
+)
+
+const (
+	// webhookPath is the HTTP path for the Elastic Maps Server validating webhook.
+	webhookPath = "/validate-ems-k8s-elastic-co-v1alpha1-mapsservers"
 )
 
 var (
@@ -25,35 +30,41 @@ var (
 		checkNoUnknownFields,
 		checkNameLength,
 		checkSupportedVersion,
+		checkAssociation,
 	}
 )
 
-// +kubebuilder:webhook:path=/validate-ems-k8s-elastic-co-v1alpha1-mapsservers,mutating=false,failurePolicy=ignore,groups=maps.k8s.elastic.co,resources=mapsservers,verbs=create;update,versions=v1alpha1,name=elastic-ems-validation-v1alpha1.k8s.elastic.co,sideEffects=None,admissionReviewVersions=v1alpha1,matchPolicy=Exact
+// +kubebuilder:webhook:path=/validate-ems-k8s-elastic-co-v1alpha1-mapsservers,mutating=false,failurePolicy=ignore,groups=maps.k8s.elastic.co,resources=mapsservers,verbs=create;update,versions=v1alpha1,name=elastic-ems-validation-v1alpha1.k8s.elastic.co,sideEffects=None,admissionReviewVersions=v1;v1beta1,matchPolicy=Exact
 
 var _ webhook.Validator = &ElasticMapsServer{}
 
-func (m *ElasticMapsServer) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(m).
-		Complete()
-}
-
-func (m *ElasticMapsServer) ValidateCreate() error {
+// ValidateCreate is called by the validating webhook to validate the create operation.
+// Satisfies the webhook.Validator interface.
+func (m *ElasticMapsServer) ValidateCreate() (admission.Warnings, error) {
 	validationLog.V(1).Info("Validate create", "name", m.Name)
 	return m.validate()
 }
 
-func (m *ElasticMapsServer) ValidateDelete() error {
+// ValidateDelete is called by the validating webhook to validate the delete operation.
+// Satisfies the webhook.Validator interface.
+func (m *ElasticMapsServer) ValidateDelete() (admission.Warnings, error) {
 	validationLog.V(1).Info("Validate delete", "name", m.Name)
-	return nil
+	return nil, nil
 }
 
-func (m *ElasticMapsServer) ValidateUpdate(_ runtime.Object) error {
+// ValidateUpdate is called by the validating webhook to validate the update operation.
+// Satisfies the webhook.Validator interface.
+func (m *ElasticMapsServer) ValidateUpdate(_ runtime.Object) (admission.Warnings, error) {
 	validationLog.V(1).Info("Validate update", "name", m.Name)
 	return m.validate()
 }
 
-func (m *ElasticMapsServer) validate() error {
+// WebhookPath returns the HTTP path used by the validating webhook.
+func (m *ElasticMapsServer) WebhookPath() string {
+	return webhookPath
+}
+
+func (m *ElasticMapsServer) validate() (admission.Warnings, error) {
 	var errors field.ErrorList
 
 	for _, dc := range defaultChecks {
@@ -64,19 +75,23 @@ func (m *ElasticMapsServer) validate() error {
 
 	if len(errors) > 0 {
 		validationLog.V(1).Info("failed validation", "errors", errors)
-		return apierrors.NewInvalid(groupKind, m.Name, errors)
+		return nil, apierrors.NewInvalid(groupKind, m.Name, errors)
 	}
-	return nil
+	return nil, nil
 }
 
-func checkNoUnknownFields(k *ElasticMapsServer) field.ErrorList {
-	return commonv1.NoUnknownFields(k, k.ObjectMeta)
+func checkNoUnknownFields(ems *ElasticMapsServer) field.ErrorList {
+	return commonv1.NoUnknownFields(ems, ems.ObjectMeta)
 }
 
-func checkNameLength(k *ElasticMapsServer) field.ErrorList {
-	return commonv1.CheckNameLength(k)
+func checkNameLength(ems *ElasticMapsServer) field.ErrorList {
+	return commonv1.CheckNameLength(ems)
 }
 
-func checkSupportedVersion(k *ElasticMapsServer) field.ErrorList {
-	return commonv1.CheckSupportedStackVersion(k.Spec.Version, version.SupportedMapsVersions)
+func checkSupportedVersion(ems *ElasticMapsServer) field.ErrorList {
+	return commonv1.CheckSupportedStackVersion(ems.Spec.Version, version.SupportedMapsVersions)
+}
+
+func checkAssociation(ems *ElasticMapsServer) field.ErrorList {
+	return commonv1.CheckAssociationRefs(field.NewPath("spec").Child("elasticsearchRef"), ems.Spec.ElasticsearchRef)
 }

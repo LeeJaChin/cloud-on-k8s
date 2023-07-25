@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	controllerscheme "github.com/elastic/cloud-on-k8s/pkg/controller/common/scheme"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	controllerscheme "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/scheme"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 func newPod(name string, uuid types.UID) corev1.Pod {
@@ -35,35 +35,35 @@ func TestExpectedPodDeletions_DeletionsSatisfied(t *testing.T) {
 
 	tests := []struct {
 		name                  string
-		resources             []runtime.Object
+		resources             []client.Object
 		expectDeletions       []corev1.Pod
 		wantSatisfied         bool
 		wantExpectedDeletions map[types.NamespacedName]types.UID
 	}{
 		{
 			name:                  "no deletion expected",
-			resources:             []runtime.Object{&pod1, &pod2},
+			resources:             []client.Object{&pod1, &pod2},
 			expectDeletions:       nil,
 			wantSatisfied:         true,
 			wantExpectedDeletions: map[types.NamespacedName]types.UID{},
 		},
 		{
 			name:                  "one deletion expected, unsatisfied",
-			resources:             []runtime.Object{&pod1, &pod2},
+			resources:             []client.Object{&pod1, &pod2},
 			expectDeletions:       []corev1.Pod{pod2},
 			wantSatisfied:         false,
 			wantExpectedDeletions: map[types.NamespacedName]types.UID{k8s.ExtractNamespacedName(&pod2): pod2.UID},
 		},
 		{
 			name:                  "one deletion expected, satisfied",
-			resources:             []runtime.Object{&pod1},
+			resources:             []client.Object{&pod1},
 			expectDeletions:       []corev1.Pod{pod2},
 			wantSatisfied:         true,
 			wantExpectedDeletions: map[types.NamespacedName]types.UID{},
 		},
 		{
 			name:            "two deletions expected, only one satisfied",
-			resources:       []runtime.Object{&pod2},
+			resources:       []client.Object{&pod2},
 			expectDeletions: []corev1.Pod{pod1, pod2},
 			// still waiting for pod2 deletion to happen
 			wantSatisfied:         false,
@@ -71,14 +71,14 @@ func TestExpectedPodDeletions_DeletionsSatisfied(t *testing.T) {
 		},
 		{
 			name:                  "two deletions expected, satisfied",
-			resources:             []runtime.Object{},
+			resources:             []client.Object{},
 			expectDeletions:       []corev1.Pod{pod1, pod2},
 			wantSatisfied:         true,
 			wantExpectedDeletions: map[types.NamespacedName]types.UID{},
 		},
 		{
 			name:                  "pod recreated with a different UID: deletion satisfied",
-			resources:             []runtime.Object{&pod1Recreated},
+			resources:             []client.Object{&pod1Recreated},
 			expectDeletions:       []corev1.Pod{pod1},
 			wantSatisfied:         true,
 			wantExpectedDeletions: map[types.NamespacedName]types.UID{},
@@ -93,9 +93,9 @@ func TestExpectedPodDeletions_DeletionsSatisfied(t *testing.T) {
 				e.ExpectDeletion(tt.expectDeletions[i])
 				require.Contains(t, e.podDeletions, k8s.ExtractNamespacedName(&tt.expectDeletions[i]))
 			}
-			satisfied, err := e.DeletionsSatisfied()
+			pendingPodsDeletions, err := e.PendingPodDeletions()
 			require.NoError(t, err)
-			require.Equal(t, tt.wantSatisfied, satisfied)
+			require.Equal(t, tt.wantSatisfied, len(pendingPodsDeletions) == 0)
 			require.Equal(t, tt.wantExpectedDeletions, e.podDeletions)
 		})
 	}

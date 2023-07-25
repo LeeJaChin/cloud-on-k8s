@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/keystore"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/volume"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/keystore"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/volume"
 )
 
 func TestNewInitContainers(t *testing.T) {
@@ -39,7 +39,7 @@ func TestNewInitContainers(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			containers, err := NewInitContainers(volume.SecretVolume{}, tt.args.keystoreResources)
+			containers, err := NewInitContainers(volume.SecretVolume{}, tt.args.keystoreResources, []string{})
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedNumberOfContainers, len(containers))
 		})

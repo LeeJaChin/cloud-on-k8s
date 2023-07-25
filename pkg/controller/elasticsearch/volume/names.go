@@ -6,8 +6,8 @@ package volume
 
 // Default values for the volume name and paths
 const (
-	ProbeUserSecretMountPath = "/mnt/elastic-internal/probe-user" //nolint:gosec
-	ProbeUserVolumeName      = "elastic-internal-probe-user"
+	PodMountedUsersSecretMountPath = "/mnt/elastic-internal/pod-mounted-users" //nolint:gosec
+	ProbeUserVolumeName            = "elastic-internal-probe-user"
 
 	ConfigVolumeMountPath               = "/usr/share/elasticsearch/config"
 	NodeTransportCertificatePathSegment = "node-transport-cert"
@@ -42,4 +42,13 @@ const (
 	DownwardAPIVolumeName = "downward-api"
 	DownwardAPIMountPath  = "/mnt/elastic-internal/downward-api"
 	LabelsFile            = "labels"
+	AnnotationsFile       = "annotations"
+
+	ServiceAccountsFile = "service_tokens"
+
+	FileSettingsVolumeName      = "file-settings"
+	FileSettingsVolumeMountPath = "/usr/share/elasticsearch/config/operator"
+
+	TempVolumeName      = "tmp-volume"
+	TempVolumeMountPath = "/tmp"
 )

@@ -7,23 +7,29 @@ package nodespec
 import (
 	corev1 "k8s.io/api/core/v1"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/certificates"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/keystore"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/volume"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/initcontainer"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/settings"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/user"
-	esvolume "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/volume"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/certificates"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/keystore"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/volume"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/filesettings"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/initcontainer"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/settings"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/user"
+	esvolume "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/volume"
 )
 
-var downwardAPIVolume = volume.DownwardAPI{}
-
-func buildVolumes(esName string, nodeSpec esv1.NodeSet, keystoreResources *keystore.Resources) ([]corev1.Volume, []corev1.VolumeMount) {
+func buildVolumes(
+	esName string,
+	version version.Version,
+	nodeSpec esv1.NodeSet,
+	keystoreResources *keystore.Resources,
+	downwardAPIVolume volume.DownwardAPI,
+) ([]corev1.Volume, []corev1.VolumeMount) {
 	configVolume := settings.ConfigSecretVolume(esv1.StatefulSet(esName, nodeSpec.Name))
 	probeSecret := volume.NewSelectiveSecretVolumeWithMountPath(
 		esv1.InternalUsersSecret(esName), esvolume.ProbeUserVolumeName,
-		esvolume.ProbeUserSecretMountPath, []string{user.ProbeUserName},
+		esvolume.PodMountedUsersSecretMountPath, []string{user.ProbeUserName, user.PreStopUserName},
 	)
 	httpCertificatesVolume := volume.NewSecretVolumeWithMountPath(
 		certificates.InternalCertsSecretName(esv1.ESNamer, esName),
@@ -49,7 +55,15 @@ func buildVolumes(esName string, nodeSpec esv1.NodeSet, keystoreResources *keyst
 		esvolume.ScriptsVolumeName,
 		esvolume.ScriptsVolumeMountPath,
 		0755)
-
+	fileSettingsVolume := volume.NewSecretVolumeWithMountPath(
+		esv1.FileSettingsSecretName(esName),
+		esvolume.FileSettingsVolumeName,
+		esvolume.FileSettingsVolumeMountPath,
+	)
+	tmpVolume := volume.NewEmptyDirVolume(
+		esvolume.TempVolumeName,
+		esvolume.TempVolumeMountPath,
+	)
 	// append future volumes from PVCs (not resolved to a claim yet)
 	persistentVolumes := make([]corev1.Volume, 0, len(nodeSpec.VolumeClaimTemplates))
 	for _, claimTemplate := range nodeSpec.VolumeClaimTemplates {
@@ -64,8 +78,9 @@ func buildVolumes(esName string, nodeSpec esv1.NodeSet, keystoreResources *keyst
 		})
 	}
 
-	volumes := append(
-		persistentVolumes, // includes the data volume, unless specified differently in the pod template
+	volumes := persistentVolumes
+	volumes = append(
+		volumes, // includes the data volume, unless specified differently in the pod template
 		append(
 			initcontainer.PluginVolumes.Volumes(),
 			esvolume.DefaultLogsVolume,
@@ -78,6 +93,7 @@ func buildVolumes(esName string, nodeSpec esv1.NodeSet, keystoreResources *keyst
 			scriptsVolume.Volume(),
 			configVolume.Volume(),
 			downwardAPIVolume.Volume(),
+			tmpVolume.Volume(),
 		)...)
 	if keystoreResources != nil {
 		volumes = append(volumes, keystoreResources.Volume)
@@ -95,9 +111,17 @@ func buildVolumes(esName string, nodeSpec esv1.NodeSet, keystoreResources *keyst
 		scriptsVolume.VolumeMount(),
 		configVolume.VolumeMount(),
 		downwardAPIVolume.VolumeMount(),
+		tmpVolume.VolumeMount(),
 	)
 
-	volumeMounts = esvolume.AppendDefaultDataVolumeMount(volumeMounts, volumes)
+	// version gate for the file-based settings volume and volumeMounts
+	if version.GTE(filesettings.FileBasedSettingsMinPreVersion) {
+		volumes = append(volumes, fileSettingsVolume.Volume())
+		volumeMounts = append(volumeMounts, fileSettingsVolume.VolumeMount())
+	}
+
+	// include the user-provided PodTemplate volumes as the user may have defined the data volume there (e.g.: emptyDir or hostpath volume)
+	volumeMounts = esvolume.AppendDefaultDataVolumeMount(volumeMounts, append(volumes, nodeSpec.PodTemplate.Spec.Volumes...))
 
 	return volumes, volumeMounts
 }

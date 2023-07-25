@@ -18,10 +18,11 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	apmv1 "github.com/elastic/cloud-on-k8s/pkg/apis/apm/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/apmserver"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/stringsutil"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test"
+	apmv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/apm/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/apmserver"
+	commonhttp "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/http"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/stringsutil"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
 )
 
 const (
@@ -45,7 +46,15 @@ func NewApmServerClient(as apmv1.ApmServer, k *test.K8sClient) (*ApmClient, erro
 	if err := k.Client.Get(context.Background(), secretTokenNamespacedName, &secretTokenSecret); err != nil {
 		return nil, err
 	}
+	secretToken, ok := secretTokenSecret.Data[apmserver.SecretTokenKey]
+	if !ok {
+		return nil, fmt.Errorf("secret token not found in secret: %s", as.Status.SecretTokenSecretName)
+	}
 
+	return NewAPMServerClientWithSecretToken(as, k, string(secretToken))
+}
+
+func NewAPMServerClientWithSecretToken(as apmv1.ApmServer, k *test.K8sClient, secretToken string) (*ApmClient, error) {
 	scheme := "http"
 	var caCerts []*x509.Certificate
 	if as.Spec.HTTP.TLS.Enabled() {
@@ -62,11 +71,6 @@ func NewApmServerClient(as apmv1.ApmServer, k *test.K8sClient) (*ApmClient, erro
 	)
 
 	client := test.NewHTTPClient(caCerts)
-
-	secretToken, ok := secretTokenSecret.Data[apmserver.SecretTokenKey]
-	if !ok {
-		return nil, fmt.Errorf("secret token not found in secret: %s", as.Status.SecretTokenSecretName)
-	}
 
 	return &ApmClient{
 		client:                   client,
@@ -137,12 +141,12 @@ func (c *ApmClient) request(
 
 // ApmServerInfo is a partial encoding of the Server Info response.
 // See https://www.elastic.co/guide/en/apm/server/current/server-info.html for more details.
-type ApmServerInfo struct {
+type ApmServerInfo struct { //nolint:revive
 	// Version is the version of the Apm Server
 	Version string `json:"version"`
 }
 
-type ApmServerInfo6 struct {
+type ApmServerInfo6 struct { //nolint:revive
 	// OK contains the ApmServerInfo
 	OK ApmServerInfo `json:"ok"`
 }
@@ -220,7 +224,7 @@ func (c *ApmClient) IntakeV2Events(ctx context.Context, rum bool, payload []byte
 		return nil, err
 	}
 
-	return &eventsErrorResponse, err
+	return &eventsErrorResponse, commonhttp.MaybeAPIError(resp)
 }
 
 // AgentConfig describes an agent configuration

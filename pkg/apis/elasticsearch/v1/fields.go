@@ -12,6 +12,7 @@ const (
 
 	DiscoveryZenHostsProvider = "discovery.zen.hosts_provider" // ES < 7.X
 	DiscoverySeedProviders    = "discovery.seed_providers"     // ES >= 7.X
+	DiscoverySeedHosts        = "discovery.seed_hosts"         // ES >= 7.X
 
 	NetworkHost        = "network.host"
 	NetworkPublishHost = "network.publish_host"
@@ -36,6 +37,7 @@ const (
 	XPackSecurityEnabled                            = "xpack.security.enabled"
 	XPackSecurityHttpSslCertificate                 = "xpack.security.http.ssl.certificate"             //nolint:revive
 	XPackSecurityHttpSslCertificateAuthorities      = "xpack.security.http.ssl.certificate_authorities" //nolint:revive
+	XPackSecurityHttpSslClientAuthentication        = "xpack.security.http.ssl.client_authentication"   //nolint:revive
 	XPackSecurityHttpSslEnabled                     = "xpack.security.http.ssl.enabled"                 //nolint:revive
 	XPackSecurityHttpSslKey                         = "xpack.security.http.ssl.key"                     //nolint:revive
 	XPackSecurityTransportSslCertificate            = "xpack.security.transport.ssl.certificate"
@@ -45,13 +47,12 @@ const (
 	XPackSecurityTransportSslVerificationMode       = "xpack.security.transport.ssl.verification_mode"
 
 	XPackLicenseUploadTypes = "xpack.license.upload.types" // supported >= 7.6.0 used as of 7.8.1
-
-	XPackMonitoringCollectionEnabled              = "xpack.monitoring.collection.enabled"
-	XPackMonitoringElasticsearchCollectionEnabled = "xpack.monitoring.elasticsearch.collection.enabled"
 )
 
 var UnsupportedSettings = []string{
 	ClusterName,
+	DiscoverySeedHosts,
+	DiscoverySeedProviders,
 	DiscoveryZenMinimumMasterNodes,
 	ClusterInitialMasterNodes,
 	NetworkHost,
@@ -64,8 +65,6 @@ var UnsupportedSettings = []string{
 	XPackSecurityHttpSslCertificate,
 	XPackSecurityHttpSslEnabled,
 	XPackSecurityHttpSslKey,
-	XPackSecurityTransportSslCertificate,
 	XPackSecurityTransportSslEnabled,
-	XPackSecurityTransportSslKey,
 	XPackSecurityTransportSslVerificationMode,
 }

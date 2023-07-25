@@ -11,16 +11,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	kbv1 "github.com/elastic/cloud-on-k8s/pkg/apis/kibana/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common"
-	esuser "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/user"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/maps"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	kbv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/kibana/v1"
+	esuser "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/user"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/maps"
 )
 
 func Test_deleteOrphanedResources(t *testing.T) {
@@ -54,7 +53,7 @@ func Test_deleteOrphanedResources(t *testing.T) {
 		"kibana.k8s.elastic.co/namespace":            esFixture.Namespace,
 	}
 
-	userSecretLabels := maps.Merge(map[string]string{common.TypeLabelName: esuser.AssociatedUserType}, associationLabels)
+	userSecretLabels := maps.Merge(map[string]string{commonv1.TypeLabelName: esuser.AssociatedUserType}, associationLabels)
 
 	assertExpectObjectsExist := func(t *testing.T, c k8s.Client) {
 		t.Helper()
@@ -85,7 +84,7 @@ func Test_deleteOrphanedResources(t *testing.T) {
 		name           string
 		kibana         kbv1.Kibana
 		es             esv1.Elasticsearch
-		initialObjects []runtime.Object
+		initialObjects []client.Object
 		postCondition  func(c k8s.Client)
 		wantErr        bool
 	}{
@@ -96,11 +95,11 @@ func Test_deleteOrphanedResources(t *testing.T) {
 				Spec: kbv1.KibanaSpec{
 					ElasticsearchRef: commonv1.ObjectSelector{ // ElasticsearchRef without a namespace
 						Name: esFixture.Name,
-						//Namespace: esFixture.Namespace, No namespace on purpose
+						// Namespace: esFixture.Namespace, No namespace on purpose
 					},
 				},
 			},
-			initialObjects: []runtime.Object{
+			initialObjects: []client.Object{
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      userInKibanaNamespace,
@@ -139,7 +138,7 @@ func Test_deleteOrphanedResources(t *testing.T) {
 					},
 				},
 			},
-			initialObjects: []runtime.Object{
+			initialObjects: []client.Object{
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      userInKibanaNamespace,
@@ -181,7 +180,7 @@ func Test_deleteOrphanedResources(t *testing.T) {
 			name:   "only valid objects",
 			kibana: kibanaFixture,
 			es:     esFixture,
-			initialObjects: []runtime.Object{
+			initialObjects: []client.Object{
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      userInKibanaNamespace,
@@ -212,7 +211,7 @@ func Test_deleteOrphanedResources(t *testing.T) {
 				ObjectMeta: kibanaFixtureObjectMeta,
 			},
 			es: esFixture,
-			initialObjects: []runtime.Object{
+			initialObjects: []client.Object{
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      userInKibanaNamespace,
@@ -266,7 +265,7 @@ func Test_deleteOrphanedResources(t *testing.T) {
 					Namespace: "ns1",
 				},
 			},
-			initialObjects: []runtime.Object{
+			initialObjects: []client.Object{
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "kibana-foo-kibana-user",

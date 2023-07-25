@@ -5,23 +5,24 @@
 package maps
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/apis/maps/v1alpha1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/watches"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/apis/maps/v1alpha1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/watches"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 func Test_newConfig(t *testing.T) {
 	type args struct {
-		runtimeObjs []runtime.Object
+		runtimeObjs []client.Object
 		ems         v1alpha1.ElasticMapsServer
 		ipFamily    corev1.IPFamily
 	}
@@ -40,9 +41,9 @@ func Test_newConfig(t *testing.T) {
 			},
 			want: `host: 0.0.0.0
 ssl:
-  certificate: /mnt/elastic-internal/http-certs/tls.crt
-  enabled: true
-  key: /mnt/elastic-internal/http-certs/tls.key
+    certificate: /mnt/elastic-internal/http-certs/tls.crt
+    enabled: true
+    key: /mnt/elastic-internal/http-certs/tls.key
 `,
 			wantErr: false,
 		},
@@ -59,9 +60,9 @@ ssl:
 			},
 			want: `host: 0.0.0.0
 ssl:
-  certificate: /mnt/elastic-internal/http-certs/tls.crt
-  enabled: true
-  key: /mnt/elastic-internal/http-certs/tls.key
+    certificate: /mnt/elastic-internal/http-certs/tls.crt
+    enabled: true
+    key: /mnt/elastic-internal/http-certs/tls.key
 ui: false
 `,
 			wantErr: false,
@@ -69,15 +70,15 @@ ui: false
 		{
 			name: "with configRef",
 			args: args{
-				runtimeObjs: []runtime.Object{secretWithConfig("cfg", []byte("ui: false"))},
+				runtimeObjs: []client.Object{secretWithConfig("cfg", []byte("ui: false"))},
 				ems:         emsWithConfigRef("cfg", nil),
 				ipFamily:    corev1.IPv4Protocol,
 			},
 			want: `host: 0.0.0.0
 ssl:
-  certificate: /mnt/elastic-internal/http-certs/tls.crt
-  enabled: true
-  key: /mnt/elastic-internal/http-certs/tls.key
+    certificate: /mnt/elastic-internal/http-certs/tls.crt
+    enabled: true
+    key: /mnt/elastic-internal/http-certs/tls.key
 ui: false
 `,
 			wantErr: false,
@@ -85,7 +86,7 @@ ui: false
 		{
 			name: "configRef takes precedence",
 			args: args{
-				runtimeObjs: []runtime.Object{secretWithConfig("cfg", []byte("ui: true"))},
+				runtimeObjs: []client.Object{secretWithConfig("cfg", []byte("ui: true"))},
 				ems: emsWithConfigRef("cfg", &commonv1.Config{Data: map[string]interface{}{
 					"ui": false,
 				}}),
@@ -93,9 +94,9 @@ ui: false
 			},
 			want: `host: 0.0.0.0
 ssl:
-  certificate: /mnt/elastic-internal/http-certs/tls.crt
-  enabled: true
-  key: /mnt/elastic-internal/http-certs/tls.key
+    certificate: /mnt/elastic-internal/http-certs/tls.crt
+    enabled: true
+    key: /mnt/elastic-internal/http-certs/tls.key
 ui: true
 `,
 			wantErr: false,
@@ -111,7 +112,7 @@ ui: true
 		{
 			name: "non existing configRef",
 			args: args{
-				runtimeObjs: []runtime.Object{
+				runtimeObjs: []client.Object{
 					&corev1.Secret{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      "sample-maps-user",
@@ -132,17 +133,17 @@ ui: true
 				ipFamily: corev1.IPv6Protocol,
 			},
 			want: `elasticsearch:
-  host: https://elasticsearch-sample-es-http.default.svc:9200
-  password: password
-  ssl:
-    certificateAuthorities: /mnt/elastic-internal/es-certs/tls.crt
-    verificationMode: certificate
-  username: ns-sample-maps-user
+    host: https://elasticsearch-sample-es-http.default.svc:9200
+    password: password
+    ssl:
+        certificateAuthorities: /mnt/elastic-internal/es-certs/ca.crt
+        verificationMode: certificate
+    username: ns-sample-maps-user
 host: '::'
 ssl:
-  certificate: /mnt/elastic-internal/http-certs/tls.crt
-  enabled: true
-  key: /mnt/elastic-internal/http-certs/tls.key
+    certificate: /mnt/elastic-internal/http-certs/tls.crt
+    enabled: true
+    key: /mnt/elastic-internal/http-certs/tls.key
 `,
 			wantErr: false,
 		},
@@ -155,7 +156,7 @@ ssl:
 				dynamicWatches: watches.NewDynamicWatches(),
 			}
 
-			got, err := newConfig(&d, tt.args.ems, tt.args.ipFamily)
+			got, err := newConfig(context.Background(), &d, tt.args.ems, tt.args.ipFamily)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("newConfig() error = %v, wantErr %v", err, tt.wantErr)
 				return

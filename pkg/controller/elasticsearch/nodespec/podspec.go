@@ -5,26 +5,38 @@
 package nodespec
 
 import (
-	"crypto/sha256"
+	"context"
 	"fmt"
+	"hash/fnv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/container"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/defaults"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/hash"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/keystore"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/volume"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/initcontainer"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/label"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/network"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/settings"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/stackmon"
-	esvolume "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/volume"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/pointer"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/annotation"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/container"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/defaults"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/hash"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/keystore"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/volume"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/initcontainer"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/label"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/network"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/securitycontext"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/settings"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/stackmon"
+	esvolume "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/volume"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/pointer"
+)
+
+const (
+	defaultFsGroup                    = 1000
+	log4j2FormatMsgNoLookupsParamName = "-Dlog4j2.formatMsgNoLookups"
+	// ConfigHashAnnotationName is an annotation used to store a hash of the Elasticsearch configuration.
+	configHashAnnotationName = "elasticsearch.k8s.elastic.co/config-hash"
 )
 
 // Starting 8.0.0, the Elasticsearch container does not run with the root user anymore. As a result,
@@ -34,12 +46,11 @@ import (
 // On some restricted environments (custom PSPs or Openshift), setting the Pod security context
 // is forbidden: the user can either set `--set-default-security-context=false`, or override the
 // podTemplate securityContext to an empty value.
-var minDefaultSecurityContextVersion = version.MustParse("8.0.0")
-
-const defaultFsGroup = 1000
+var minDefaultSecurityContextVersion = version.MinFor(8, 0, 0)
 
 // BuildPodTemplateSpec builds a new PodTemplateSpec for an Elasticsearch node.
 func BuildPodTemplateSpec(
+	ctx context.Context,
 	client k8s.Client,
 	es esv1.Elasticsearch,
 	nodeSet esv1.NodeSet,
@@ -47,8 +58,15 @@ func BuildPodTemplateSpec(
 	keystoreResources *keystore.Resources,
 	setDefaultSecurityContext bool,
 ) (corev1.PodTemplateSpec, error) {
-	volumes, volumeMounts := buildVolumes(es.Name, nodeSet, keystoreResources)
-	labels, err := buildLabels(es, cfg, nodeSet, keystoreResources)
+	ver, err := version.Parse(es.Spec.Version)
+	if err != nil {
+		return corev1.PodTemplateSpec{}, err
+	}
+
+	downwardAPIVolume := volume.DownwardAPI{}.WithAnnotations(es.HasDownwardNodeLabels())
+	volumes, volumeMounts := buildVolumes(es.Name, ver, nodeSet, keystoreResources, downwardAPIVolume)
+
+	labels, err := buildLabels(es, cfg, nodeSet)
 	if err != nil {
 		return corev1.PodTemplateSpec{}, err
 	}
@@ -59,6 +77,7 @@ func BuildPodTemplateSpec(
 	initContainers, err := initcontainer.NewInitContainers(
 		transportCertificatesVolume(esv1.StatefulSet(es.Name, nodeSet.Name)),
 		keystoreResources,
+		es.DownwardNodeLabels(),
 	)
 	if err != nil {
 		return corev1.PodTemplateSpec{}, err
@@ -66,10 +85,6 @@ func BuildPodTemplateSpec(
 
 	builder := defaults.NewPodTemplateBuilder(nodeSet.PodTemplate, esv1.ElasticsearchContainerName)
 
-	ver, err := version.Parse(es.Spec.Version)
-	if err != nil {
-		return corev1.PodTemplateSpec{}, err
-	}
 	if ver.GTE(minDefaultSecurityContextVersion) && setDefaultSecurityContext {
 		builder = builder.WithPodSecurityContext(corev1.PodSecurityContext{
 			FSGroup: pointer.Int64(defaultFsGroup),
@@ -78,10 +93,28 @@ func BuildPodTemplateSpec(
 
 	headlessServiceName := HeadlessServiceName(esv1.StatefulSet(es.Name, nodeSet.Name))
 
+	// We retrieve the ConfigMap that holds the scripts to trigger a Pod restart if it is updated.
+	esScripts := &corev1.ConfigMap{}
+	if err := client.Get(context.Background(), types.NamespacedName{Namespace: es.Namespace, Name: esv1.ScriptsConfigMap(es.Name)}, esScripts); err != nil {
+		return corev1.PodTemplateSpec{}, err
+	}
+	annotations := buildAnnotations(es, cfg, keystoreResources, esScripts.ResourceVersion)
+
+	// Attempt to detect if the default data directory is mounted in a volume.
+	// If not, it could be a bug, a misconfiguration, or a custom storage configuration that requires the user to
+	// explicitly set ReadOnlyRootFilesystem to true.
+	enableReadOnlyRootFilesystem := false
+	for _, volumeMount := range volumeMounts {
+		if volumeMount.Name == esvolume.ElasticsearchDataVolumeName {
+			enableReadOnlyRootFilesystem = true
+			break
+		}
+	}
+
 	// build the podTemplate until we have the effective resources configured
 	builder = builder.
 		WithLabels(labels).
-		WithAnnotations(DefaultAnnotations).
+		WithAnnotations(annotations).
 		WithDockerImage(es.Spec.Image, container.ImageRepository(container.ElasticsearchImage, es.Spec.Version)).
 		WithResources(DefaultResources).
 		WithTerminationGracePeriod(DefaultTerminationGracePeriodSeconds).
@@ -92,12 +125,20 @@ func BuildPodTemplateSpec(
 		WithVolumes(volumes...).
 		WithVolumeMounts(volumeMounts...).
 		WithInitContainers(initContainers...).
-		WithInitContainerDefaults(corev1.EnvVar{Name: settings.HeadlessServiceName, Value: headlessServiceName}).
+		// inherit all env vars from main containers to allow Elasticsearch tools that read ES config to work in initContainers
+		WithInitContainerDefaults(builder.MainContainer().Env...).
+		// set a default security context for both the Containers and the InitContainers
+		WithContainersSecurityContext(securitycontext.For(ver, enableReadOnlyRootFilesystem)).
 		WithPreStopHook(*NewPreStopHook())
 
-	builder, err = stackmon.WithMonitoring(client, builder, es)
+	builder, err = stackmon.WithMonitoring(ctx, client, builder, es)
 	if err != nil {
 		return corev1.PodTemplateSpec{}, err
+	}
+
+	if ver.LT(version.From(7, 2, 0)) {
+		// mitigate CVE-2021-44228
+		enableLog4JFormatMsgNoLookups(builder)
 	}
 
 	return builder.PodTemplate, nil
@@ -122,7 +163,6 @@ func buildLabels(
 	es esv1.Elasticsearch,
 	cfg settings.CanonicalConfig,
 	nodeSet esv1.NodeSet,
-	keystoreResources *keystore.Resources,
 ) (map[string]string, error) {
 	// label with version
 	ver, err := version.Parse(es.Spec.Version)
@@ -130,27 +170,78 @@ func buildLabels(
 		return nil, err
 	}
 
-	// label with a hash of the config to rotate the pod on config changes
 	unpackedCfg, err := cfg.Unpack(ver)
 	if err != nil {
 		return nil, err
 	}
-	node := unpackedCfg.Node
-	cfgHash := hash.HashObject(cfg)
 
+	node := unpackedCfg.Node
 	podLabels := label.NewPodLabels(
 		k8s.ExtractNamespacedName(&es),
 		esv1.StatefulSet(es.Name, nodeSet.Name),
-		ver, node, cfgHash, es.Spec.HTTP.Protocol(),
+		ver, node, es.Spec.HTTP.Protocol(),
 	)
 
-	if keystoreResources != nil {
-		// label with a checksum of the secure settings to rotate the pod on secure settings change
-		// TODO: use hash.HashObject instead && fix the config checksum label name?
-		configChecksum := sha256.New224()
-		_, _ = configChecksum.Write([]byte(keystoreResources.Version))
-		podLabels[label.SecureSettingsHashLabelName] = fmt.Sprintf("%x", configChecksum.Sum(nil))
+	return podLabels, nil
+}
+
+func buildAnnotations(
+	es esv1.Elasticsearch,
+	cfg settings.CanonicalConfig,
+	keystoreResources *keystore.Resources,
+	scriptsVersion string,
+) map[string]string {
+	// start from our defaults
+	annotations := map[string]string{
+		annotation.FilebeatModuleAnnotation: "elasticsearch",
 	}
 
-	return podLabels, nil
+	configHash := fnv.New32a()
+	// hash of the ES config to rotate the pod on config changes
+	hash.WriteHashObject(configHash, cfg)
+	// hash of the scripts' version to rotate the pod if the scripts have changed
+	_, _ = configHash.Write([]byte(scriptsVersion))
+
+	if es.HasDownwardNodeLabels() {
+		// list of node labels expected on the pod to rotate the pod when the list is updated
+		_, _ = configHash.Write([]byte(es.Annotations[esv1.DownwardNodeLabelsAnnotation]))
+	}
+
+	if keystoreResources != nil {
+		// resource version of the secure settings secret to rotate the pod on secure settings change
+		_, _ = configHash.Write([]byte(keystoreResources.Version))
+	}
+
+	// set the annotation in place
+	annotations[configHashAnnotationName] = fmt.Sprint(configHash.Sum32())
+
+	return annotations
+}
+
+// enableLog4JFormatMsgNoLookups prepends the JVM parameter `-Dlog4j2.formatMsgNoLookups=true` to the environment variable `ES_JAVA_OPTS`
+// in order to mitigate the Log4Shell vulnerability CVE-2021-44228, if it is not yet defined by the user, for
+// versions of Elasticsearch before 7.2.0.
+func enableLog4JFormatMsgNoLookups(builder *defaults.PodTemplateBuilder) {
+	log4j2Param := fmt.Sprintf("%s=true", log4j2FormatMsgNoLookupsParamName)
+	for c, esContainer := range builder.PodTemplate.Spec.Containers {
+		if esContainer.Name != esv1.ElasticsearchContainerName {
+			continue
+		}
+		currentJvmOpts := ""
+		for e, envVar := range esContainer.Env {
+			if envVar.Name != settings.EnvEsJavaOpts {
+				continue
+			}
+			currentJvmOpts = envVar.Value
+			if !strings.Contains(currentJvmOpts, log4j2FormatMsgNoLookupsParamName) {
+				builder.PodTemplate.Spec.Containers[c].Env[e].Value = log4j2Param + " " + currentJvmOpts
+			}
+		}
+		if currentJvmOpts == "" {
+			builder.PodTemplate.Spec.Containers[c].Env = append(
+				builder.PodTemplate.Spec.Containers[c].Env,
+				corev1.EnvVar{Name: settings.EnvEsJavaOpts, Value: log4j2Param},
+			)
+		}
+	}
 }

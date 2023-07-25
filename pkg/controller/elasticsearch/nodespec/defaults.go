@@ -11,13 +11,12 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/annotation"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/defaults"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/label"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/settings"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/user"
-	esvolume "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/volume"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/defaults"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/label"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/settings"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/user"
+	esvolume "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/volume"
 )
 
 const (
@@ -40,18 +39,13 @@ var (
 			corev1.ResourceMemory: DefaultMemoryLimits,
 		},
 	}
-
-	// DefaultAnnotations are the default annotations for the Elasticsearch pods
-	DefaultAnnotations = map[string]string{
-		annotation.FilebeatModuleAnnotation: "elasticsearch",
-	}
 )
 
 // DefaultEnvVars are environment variables injected into Elasticsearch pods.
 func DefaultEnvVars(httpCfg commonv1.HTTPConfig, headlessServiceName string) []corev1.EnvVar {
 	return defaults.ExtendPodDownwardEnvVars(
 		[]corev1.EnvVar{
-			{Name: settings.EnvProbePasswordPath, Value: path.Join(esvolume.ProbeUserSecretMountPath, user.ProbeUserName)},
+			{Name: settings.EnvProbePasswordPath, Value: path.Join(esvolume.PodMountedUsersSecretMountPath, user.ProbeUserName)},
 			{Name: settings.EnvProbeUsername, Value: user.ProbeUserName},
 			{Name: settings.EnvReadinessProbeProtocol, Value: httpCfg.Protocol()},
 			{Name: settings.HeadlessServiceName, Value: headlessServiceName},

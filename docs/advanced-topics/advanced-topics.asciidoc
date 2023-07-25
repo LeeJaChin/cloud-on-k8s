@@ -10,18 +10,22 @@ endif::[]
 [partintro]
 --
 - <<{p}-openshift>>
+- <<{p}-autopilot>>
 - <<{p}-custom-images>>
 - <<{p}-service-meshes>>
 - <<{p}-traffic-splitting>>
 - <<{p}-network-policies>>
 - <<{p}-webhook-namespace-selectors>>
 - <<{p}-stack-monitoring>>
+- <<{p}-fips>>
 --
 
 include::openshift.asciidoc[leveloffset=+1]
+include::gke-autopilot.asciidoc[leveloffset=+1]
 include::custom-images.asciidoc[leveloffset=+1]
 include::service-meshes.asciidoc[leveloffset=+1]
 include::traffic-splitting.asciidoc[leveloffset=+1]
 include::network-policies.asciidoc[leveloffset=+1]
 include::webhook-namespace-selectors.asciidoc[leveloffset=+1]
 include::stack-monitoring.asciidoc[leveloffset=+1]
+include::fips.asciidoc[leveloffset=+1]

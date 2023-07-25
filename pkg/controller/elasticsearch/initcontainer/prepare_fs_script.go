@@ -7,9 +7,9 @@ package initcontainer
 import (
 	"bytes"
 	"fmt"
-	"html/template"
+	"text/template"
 
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/volume"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/volume"
 )
 
 // TemplateParams are the parameters manipulated in the scriptTemplate
@@ -20,6 +20,10 @@ type TemplateParams struct {
 	LinkedFiles LinkedFilesArray
 	// ChownToElasticsearch are paths that need to be chowned to the Elasticsearch user/group.
 	ChownToElasticsearch []string
+
+	// ExpectedAnnotations are the annotations expected on the Pod. Init script waits until these annotations are set by
+	// the operator.
+	ExpectedAnnotations *string
 
 	// InitContainerTransportCertificatesSecretVolumeMountPath is the path to the volume in the init container that
 	// contains the transport certificates.
@@ -57,7 +61,18 @@ var scriptTemplate = template.Must(template.New("").Parse(
 	`#!/usr/bin/env bash
 
 	set -eu
-
+{{ if .ExpectedAnnotations }}
+	function annotations_exist() {
+	  expected_annotations=("$@")
+	  for expected_annotation in "${expected_annotations[@]}"; do
+		annotation_exists=$(grep -c "^${expected_annotation}=" /mnt/elastic-internal/downward-api/annotations)
+		if [ "${annotation_exists}" -eq 0 ]; then
+			return 1
+		fi
+	  done
+	  return 0
+	}
+{{ end }}
 	# the operator only works with the default ES distribution
 	license=/usr/share/elasticsearch/LICENSE.txt
 	if [[ ! -f $license || $(grep -Exc "ELASTIC LICENSE AGREEMENT|Elastic License 2.0" $license) -ne 1 ]]; then
@@ -81,20 +96,6 @@ var scriptTemplate = template.Must(template.New("").Parse(
 	echo "Starting init script"
 
 	######################
-	#  Config linking    #
-	######################
-
-	# Link individual files from their mount location into the config dir
-	# to a volume, to be used by the ES container
-	ln_start=$(date +%s)
-	{{range .LinkedFiles.Array}}
-		echo "Linking {{.Source}} to {{.Target}}"
-		ln -sf {{.Source}} {{.Target}}
-	{{end}}
-	echo "File linking duration: $(duration $ln_start) sec."
-
-
-	######################
 	#  Files persistence #
 	######################
 
@@ -111,6 +112,19 @@ var scriptTemplate = template.Must(template.New("").Parse(
 		fi
 	{{end}}
 	echo "Files copy duration: $(duration $mv_start) sec."
+
+	######################
+	#  Config linking    #
+	######################
+
+	# Link individual files from their mount location into the config dir
+	# to a volume, to be used by the ES container
+	ln_start=$(date +%s)
+	{{range .LinkedFiles.Array}}
+		echo "Linking {{.Source}} to {{.Target}}"
+		ln -sf {{.Source}} {{.Target}}
+	{{end}}
+	echo "File linking duration: $(duration $ln_start) sec."
 
 	######################
 	#  Volumes chown     #
@@ -165,7 +179,14 @@ var scriptTemplate = template.Must(template.New("").Parse(
 	ln -sf $CERT_SOURCE_PATH $CERT_TARGET_PATH
 
 	echo "Certs linking duration: $(duration $ln_start) sec."
-
+{{ if .ExpectedAnnotations }}
+	echo "Waiting for the following annotations to be set on Pod: {{ .ExpectedAnnotations }}"
+	ln_start=$(date +%s)
+	declare -a expected_annotations
+    expected_annotations=({{ .ExpectedAnnotations }})
+  	while ! annotations_exist "${expected_annotations[@]}"; do sleep 2; done
+	echo "Waiting for annotations duration: $(duration $ln_start) sec."
+{{ end }}
 	######################
 	#         End        #
 	######################

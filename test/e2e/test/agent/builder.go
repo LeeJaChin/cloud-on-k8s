@@ -15,21 +15,25 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/utils/pointer"
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	agentv1alpha1 "github.com/elastic/cloud-on-k8s/pkg/apis/agent/v1alpha1"
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/settings"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
-	"github.com/elastic/cloud-on-k8s/test/e2e/cmd/run"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test"
+	agentv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/agent/v1alpha1"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/agent"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/settings"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/client"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/cmd/run"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
 )
 
 const (
-	PSPClusterRoleName = "elastic-agent-restricted"
-
 	AgentFleetModeRoleName = "elastic-agent-fleet"
+
+	// FleetServerPseudoKind is a lookup key for a version definition.
+	// FleetServer has the same CRD as Agent but for testing purposes we want to be able to configure a different image.
+	FleetServerPseudoKind = "FleetServer"
 )
 
 // Builder to create an Agent
@@ -39,6 +43,8 @@ type Builder struct {
 	ValidationsOutputs []string
 	AdditionalObjects  []k8sclient.Object
 
+	MutatedFrom *Builder
+
 	// PodTemplate points to the PodTemplate in spec.DaemonSet or spec.Deployment
 	PodTemplate *corev1.PodTemplateSpec
 
@@ -47,12 +53,22 @@ type Builder struct {
 }
 
 func (b Builder) SkipTest() bool {
+	ver := version.MustParse(b.Agent.Spec.Version)
 	supportedVersions := version.SupportedAgentVersions
+
 	if b.Agent.Spec.FleetModeEnabled() {
 		supportedVersions = version.SupportedFleetModeAgentVersions
+
+		// Kibana bug "index conflict on install policy", https://github.com/elastic/kibana/issues/126611
+		if ver.GTE(version.MinFor(8, 0, 0)) && ver.LT(version.MinFor(8, 1, 0)) {
+			return true
+		}
+		// Elastic agent bug "deadlock on startup", https://github.com/elastic/cloud-on-k8s/issues/6331#issuecomment-1478320487
+		if ver.GE(version.MinFor(8, 6, 0)) && ver.LT(version.MinFor(8, 7, 0)) {
+			return true
+		}
 	}
 
-	ver := version.MustParse(b.Agent.Spec.Version)
 	return supportedVersions.WithinRange(ver) != nil
 }
 
@@ -98,6 +114,11 @@ type ValidationFunc func(client.Client) error
 
 func (b Builder) WithVersion(version string) Builder {
 	b.Agent.Spec.Version = version
+	return b
+}
+
+func (b Builder) WithMutatedFrom(builder *Builder) Builder {
+	b.MutatedFrom = builder
 	return b
 }
 
@@ -158,11 +179,6 @@ func (b Builder) WithConfig(config *commonv1.Config) Builder {
 	return b
 }
 
-func (b Builder) WithImage(image string) Builder {
-	b.Agent.Spec.Image = image
-	return b
-}
-
 func (b Builder) WithSuffix(suffix string) Builder {
 	if suffix != "" {
 		b.Agent.ObjectMeta.Name = b.Agent.ObjectMeta.Name + "-" + suffix
@@ -182,11 +198,29 @@ func (b Builder) WithRestrictedSecurityContext() Builder {
 }
 
 func (b Builder) WithContainerSecurityContext(securityContext corev1.SecurityContext) Builder {
-	for i := range b.PodTemplate.Spec.Containers {
-		b.PodTemplate.Spec.Containers[i].SecurityContext = &securityContext
+	containerIdx := getContainerIndex(agent.ContainerName, b.PodTemplate.Spec.Containers)
+	if containerIdx < 0 {
+		b.PodTemplate.Spec.Containers = append(
+			b.PodTemplate.Spec.Containers,
+			corev1.Container{
+				Name:            agent.ContainerName,
+				SecurityContext: &securityContext,
+			},
+		)
+		return b
 	}
 
+	b.PodTemplate.Spec.Containers[containerIdx].SecurityContext = &securityContext
 	return b
+}
+
+func getContainerIndex(name string, containers []corev1.Container) int {
+	for i := range containers {
+		if containers[i].Name == name {
+			return i
+		}
+	}
+	return -1
 }
 
 func (b Builder) WithLabel(key, value string) Builder {
@@ -288,7 +322,6 @@ func (b Builder) WithFleetMode() Builder {
 
 func (b Builder) WithFleetServer() Builder {
 	b.Agent.Spec.FleetServerEnabled = true
-
 	return b
 }
 
@@ -309,6 +342,16 @@ func (b Builder) WithObjects(objs ...k8sclient.Object) Builder {
 	return b
 }
 
+func (b Builder) WithTLSDisabled(disabled bool) Builder {
+	if b.Agent.Spec.HTTP.TLS.SelfSignedCertificate == nil {
+		b.Agent.Spec.HTTP.TLS.SelfSignedCertificate = &commonv1.SelfSignedCertificate{}
+	} else {
+		b.Agent.Spec.HTTP.TLS.SelfSignedCertificate = b.Agent.Spec.HTTP.TLS.SelfSignedCertificate.DeepCopy()
+	}
+	b.Agent.Spec.HTTP.TLS.SelfSignedCertificate.Disabled = disabled
+	return b
+}
+
 func (b Builder) Ref() commonv1.ObjectSelector {
 	return commonv1.ObjectSelector{
 		Name:      b.Agent.Name,
@@ -317,7 +360,31 @@ func (b Builder) Ref() commonv1.ObjectSelector {
 }
 
 func (b Builder) RuntimeObjects() []k8sclient.Object {
+	// OpenShift does not only require running as root, the privileged field must also be
+	// set to true in order to write in a hostPath volume.
+	if test.Ctx().OcpCluster {
+		podSecurityContext := b.getPodSecurityContext()
+		if podSecurityContext != nil && podSecurityContext.RunAsUser != nil {
+			if *podSecurityContext.RunAsUser == 0 {
+				// Only update the container's SecurityContext if the Pod runs as root.
+				b = b.WithContainerSecurityContext(corev1.SecurityContext{
+					Privileged: pointer.Bool(true),
+					RunAsUser:  pointer.Int64(0),
+				})
+			}
+		}
+	}
 	return append(b.AdditionalObjects, &b.Agent)
+}
+
+func (b Builder) getPodSecurityContext() *corev1.PodSecurityContext {
+	if b.Agent.Spec.Deployment != nil {
+		return b.Agent.Spec.Deployment.PodTemplate.Spec.SecurityContext
+	}
+	if b.Agent.Spec.DaemonSet != nil {
+		return b.Agent.Spec.DaemonSet.PodTemplate.Spec.SecurityContext
+	}
+	return nil
 }
 
 var _ test.Builder = Builder{}

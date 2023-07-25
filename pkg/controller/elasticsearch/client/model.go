@@ -12,9 +12,9 @@ import (
 
 	"github.com/pkg/errors"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/stringsutil"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/stringsutil"
 )
 
 // Info represents the response from /
@@ -43,6 +43,18 @@ type Health struct {
 	NumberOfInFlightFetch       int                      `json:"number_of_in_flight_fetch"`
 	TaskMaxWaitingInQueueMillis int                      `json:"task_max_waiting_in_queue_millis"`
 	ActiveShardsPercentAsNumber float32                  `json:"active_shards_percent_as_number"`
+}
+
+// HasShardActivity indicates that there is some shard activity in the cluster.
+// It can be the case if some shards are being fetched, relocated or initialized.
+// It's only reliable if Health result was created with wait_for_events=languid
+// so that there are no pending initialisations in the task queue.
+// It returns true if the status request has timed out.
+func (h Health) HasShardActivity() bool {
+	return h.TimedOut || // make sure request did not time out (i.e. no pending events)
+		h.NumberOfInFlightFetch > 0 || // no shards being fetched
+		h.InitializingShards > 0 || // no shards initializing
+		h.RelocatingShards > 0 // no shards relocating
 }
 
 type ShardState string
@@ -103,6 +115,10 @@ type NodeStats struct {
 			Memory struct {
 				LimitInBytes string `json:"limit_in_bytes"`
 			} `json:"memory"`
+			CPU struct {
+				CFSPeriodMicros int `json:"cfs_period_micros"`
+				CFSQuotaMicros  int `json:"cfs_quota_micros"`
+			} `json:"cpu"`
 		} `json:"cgroup"`
 	} `json:"os"`
 }
@@ -249,9 +265,10 @@ type ErrorResponse struct {
 			Reason string `json:"reason"`
 			Type   string `json:"type"`
 		} `json:"caused_by"`
-		Reason    string `json:"reason"`
-		Type      string `json:"type"`
-		RootCause []struct {
+		Reason     string `json:"reason"`
+		Type       string `json:"type"`
+		StackTrace string `json:"stack_trace,omitempty"`
+		RootCause  []struct {
 			Reason string `json:"reason"`
 			Type   string `json:"type"`
 		} `json:"root_cause"`
@@ -352,7 +369,7 @@ type LicenseResponse struct {
 	License License `json:"license"`
 }
 
-// StartTrialResponse is the response to the start trial API call.
+// StartBasicResponse is the response to the start trial API call.
 type StartBasicResponse struct {
 	Acknowledged    bool   `json:"acknowledged"`
 	BasicWasStarted bool   `json:"basic_was_started"`
@@ -374,7 +391,7 @@ type RemoteClusters struct {
 	RemoteClusters map[string]RemoteCluster `json:"remote,omitempty"`
 }
 
-// RemoteClusterSeeds is the set of seeds to use in a remote cluster setting.
+// RemoteCluster is the set of seeds to use in a remote cluster setting.
 type RemoteCluster struct {
 	Seeds []string `json:"seeds"`
 }
@@ -400,4 +417,107 @@ type SearchResults struct {
 	Hits   Hits                       `json:"hits"`
 	Shards json.RawMessage            // model when needed
 	Aggs   map[string]json.RawMessage // model when needed
+}
+
+// ShutdownType is the set of different shutdown operation types supported by Elasticsearch.
+type ShutdownType string
+
+var (
+
+	// Restart indicates the intent to restart an Elasticsearch node.
+	Restart ShutdownType = "restart"
+	// Remove indicates the intent to permanently remove a node from the Elasticsearch cluster.
+	Remove ShutdownType = "remove"
+)
+
+// ShutdownStatus is the set of different status a shutdown requests can have.
+type ShutdownStatus string
+
+// Applies is a predicate that checks this status against a given shutdown struct and returns true if they are the same status.
+func (status ShutdownStatus) Applies(shutdown NodeShutdown) bool {
+	return shutdown.Status == status
+}
+
+var (
+	// ShutdownInProgress means a shutdown request has been accepted and is being processed in Elasticsearch.
+	ShutdownInProgress ShutdownStatus = "IN_PROGRESS"
+	// ShutdownComplete means a shutdown request has been processed and the node can be either restarted or taken out
+	// of the cluster by an orchestrator.
+	ShutdownComplete ShutdownStatus = "COMPLETE"
+	// ShutdownStalled means a shutdown request cannot be processed further because of a limiting constraint e.g.
+	// no place for shard data to migrate to.
+	ShutdownStalled ShutdownStatus = "STALLED"
+	// ShutdownNotStarted is an error condition that should never be returned by Elasticsearch and indicates a bug if so.
+	ShutdownNotStarted ShutdownStatus = "NOT_STARTED"
+)
+
+// ShardMigration is the status of shards that are being migrated away from a node that goes through a shutdown.
+type ShardMigration struct {
+	Status                   ShutdownStatus `json:"status"`
+	ShardMigrationsRemaining int            `json:"shard_migrations_remaining"`
+	Explanation              string         `json:"explanation"`
+}
+
+// PersistentTasks expresses the status of preparing ongoing persistent tasks for a node shutdown.
+type PersistentTasks struct {
+	Status ShutdownStatus `json:"status"`
+}
+
+// Plugins represents the status of Elasticsearch plugins being prepared for a node shutdown.
+type Plugins struct {
+	Status ShutdownStatus `json:"status"`
+}
+
+// NodeShutdown is the representation of an ongoing shutdown request.
+type NodeShutdown struct {
+	NodeID                string          `json:"node_id"`
+	Type                  string          `json:"type"`
+	Reason                string          `json:"reason"`
+	ShutdownStartedMillis int             `json:"shutdown_startedmillis"` // missing _ is a serialization inconsistency in Elasticsearch
+	Status                ShutdownStatus  `json:"status"`
+	ShardMigration        ShardMigration  `json:"shard_migration"`
+	PersistentTasks       PersistentTasks `json:"persistent_tasks"`
+	Plugins               Plugins         `json:"plugins"`
+}
+
+// Is tests a NodeShutdown request whether it is of type t.
+func (ns NodeShutdown) Is(t ShutdownType) bool {
+	// API returns type in capital letters currently
+	return strings.EqualFold(ns.Type, string(t))
+}
+
+// ShutdownRequest is the body of a node shutdown request.
+type ShutdownRequest struct {
+	Type            ShutdownType  `json:"type"`
+	Reason          string        `json:"reason"`
+	AllocationDelay time.Duration `json:"allocation_delay,omitempty"`
+}
+
+// ShutdownResponse is the response wrapper for retrieving the status of ongoing node shutdowns from Elasticsearch.
+type ShutdownResponse struct {
+	Nodes []NodeShutdown `json:"nodes"`
+}
+
+// ClusterState models the internal representation of the cluster state
+type ClusterState struct {
+	Metadata Metadata `json:"metadata"`
+}
+
+type Metadata struct {
+	ReservedState ReservedState `json:"reserved_state"`
+}
+
+type ReservedState struct {
+	FileSettings FileSettings `json:"file_settings"`
+}
+
+type FileSettings struct {
+	Version int64               `json:"version"`
+	Errors  *FileSettingsErrors `json:"errors,omitempty"`
+}
+
+type FileSettingsErrors struct {
+	Version   int64    `json:"version"`
+	ErrorKind string   `json:"error_kind"`
+	Errors    []string `json:"errors"`
 }

@@ -11,14 +11,19 @@ import (
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/stackmon/monitoring"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/stackmon/validations"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	ulog "github.com/elastic/cloud-on-k8s/pkg/utils/log"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/stackmon/monitoring"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/stackmon/validations"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	ulog "github.com/elastic/cloud-on-k8s/v2/pkg/utils/log"
+)
+
+const (
+	// webhookPath is the HTTP path for the Kibana validating webhook.
+	webhookPath = "/validate-kibana-k8s-elastic-co-v1-kibana"
 )
 
 var (
@@ -30,6 +35,7 @@ var (
 		checkNameLength,
 		checkSupportedVersion,
 		checkMonitoring,
+		checkAssociations,
 	}
 
 	updateChecks = []func(old, curr *Kibana) field.ErrorList{
@@ -41,33 +47,38 @@ var (
 
 var _ webhook.Validator = &Kibana{}
 
-func (k *Kibana) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(k).
-		Complete()
-}
-
-func (k *Kibana) ValidateCreate() error {
+// ValidateCreate is called by the validating webhook to validate the create operation.
+// Satisfies the webhook.Validator interface.
+func (k *Kibana) ValidateCreate() (admission.Warnings, error) {
 	validationLog.V(1).Info("Validate create", "name", k.Name)
 	return k.validate(nil)
 }
 
-func (k *Kibana) ValidateDelete() error {
+// ValidateDelete is called by the validating webhook to validate the delete operation.
+// Satisfies the webhook.Validator interface.
+func (k *Kibana) ValidateDelete() (admission.Warnings, error) {
 	validationLog.V(1).Info("Validate delete", "name", k.Name)
-	return nil
+	return nil, nil
 }
 
-func (k *Kibana) ValidateUpdate(old runtime.Object) error {
+// ValidateUpdate is called by the validating webhook to validate the update operation.
+// Satisfies the webhook.Validator interface.
+func (k *Kibana) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
 	validationLog.V(1).Info("Validate update", "name", k.Name)
 	oldObj, ok := old.(*Kibana)
 	if !ok {
-		return errors.New("cannot cast old object to Kibana type")
+		return nil, errors.New("cannot cast old object to Kibana type")
 	}
 
 	return k.validate(oldObj)
 }
 
-func (k *Kibana) validate(old *Kibana) error {
+// WebhookPath returns the HTTP path used by the validating webhook.
+func (k *Kibana) WebhookPath() string {
+	return webhookPath
+}
+
+func (k *Kibana) validate(old *Kibana) (admission.Warnings, error) {
 	var errors field.ErrorList
 	if old != nil {
 		for _, uc := range updateChecks {
@@ -77,7 +88,7 @@ func (k *Kibana) validate(old *Kibana) error {
 		}
 
 		if len(errors) > 0 {
-			return apierrors.NewInvalid(groupKind, k.Name, errors)
+			return nil, apierrors.NewInvalid(groupKind, k.Name, errors)
 		}
 	}
 
@@ -88,9 +99,9 @@ func (k *Kibana) validate(old *Kibana) error {
 	}
 
 	if len(errors) > 0 {
-		return apierrors.NewInvalid(groupKind, k.Name, errors)
+		return nil, apierrors.NewInvalid(groupKind, k.Name, errors)
 	}
-	return nil
+	return nil, nil
 }
 
 func checkNoUnknownFields(k *Kibana) field.ErrorList {
@@ -106,15 +117,27 @@ func checkSupportedVersion(k *Kibana) field.ErrorList {
 }
 
 func checkNoDowngrade(prev, curr *Kibana) field.ErrorList {
+	if commonv1.IsConfiguredToAllowDowngrades(curr) {
+		return nil
+	}
 	return commonv1.CheckNoDowngrade(prev.Spec.Version, curr.Spec.Version)
 }
 
 func checkMonitoring(k *Kibana) field.ErrorList {
-	errs := validations.Validate(k, k.Spec.Version)
+	errs := validations.Validate(k, k.Spec.Version, validations.MinStackVersion)
 	// Kibana must be associated to an Elasticsearch when monitoring metrics are enabled
 	if monitoring.IsMetricsDefined(k) && !k.Spec.ElasticsearchRef.IsDefined() {
 		errs = append(errs, field.Invalid(field.NewPath("spec").Child("elasticsearchRef"), k.Spec.ElasticsearchRef,
 			validations.InvalidKibanaElasticsearchRefForStackMonitoringMsg))
 	}
 	return errs
+}
+
+func checkAssociations(k *Kibana) field.ErrorList {
+	monitoringPath := field.NewPath("spec").Child("monitoring")
+	err1 := commonv1.CheckAssociationRefs(monitoringPath.Child("metrics"), k.GetMonitoringMetricsRefs()...)
+	err2 := commonv1.CheckAssociationRefs(monitoringPath.Child("logs"), k.GetMonitoringLogsRefs()...)
+	err3 := commonv1.CheckAssociationRefs(field.NewPath("spec").Child("elasticsearchRef"), k.Spec.ElasticsearchRef)
+	err4 := commonv1.CheckAssociationRefs(field.NewPath("spec").Child("enterpriseSearchRef"), k.Spec.EnterpriseSearchRef)
+	return append(err1, append(err2, append(err3, err4...)...)...)
 }

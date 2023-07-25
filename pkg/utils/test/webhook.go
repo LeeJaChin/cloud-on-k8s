@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -26,11 +25,8 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	controllerscheme "github.com/elastic/cloud-on-k8s/pkg/controller/common/scheme"
-	ulog "github.com/elastic/cloud-on-k8s/pkg/utils/log"
+	controllerscheme "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/scheme"
 )
-
-var log = ulog.Log.WithName("test-webhook")
 
 // ValidationWebhookTestCase represents a test case for testing a validation webhook
 type ValidationWebhookTestCase struct {
@@ -77,14 +73,13 @@ func ValidationWebhookFailed(causeRegexes ...string) func(*testing.T, *admission
 }
 
 // RunValidationWebhookTests runs a series of ValidationWebhookTestCases
+//
 //nolint:thelper
 func RunValidationWebhookTests(t *testing.T, gvk metav1.GroupVersionKind, validator admission.Validator, tests ...ValidationWebhookTestCase) {
 	controllerscheme.SetupScheme()
 	decoder := serializer.NewCodecFactory(clientgoscheme.Scheme).UniversalDeserializer()
 
-	webhook := admission.ValidatingWebhookFor(validator)
-	require.NoError(t, webhook.InjectScheme(clientgoscheme.Scheme))
-	require.NoError(t, webhook.InjectLogger(log))
+	webhook := admission.ValidatingWebhookFor(clientgoscheme.Scheme, validator)
 
 	server := httptest.NewServer(webhook)
 	defer server.Close()
@@ -124,7 +119,7 @@ func RunValidationWebhookTests(t *testing.T, gvk metav1.GroupVersionKind, valida
 			require.NoError(t, err)
 			defer func() {
 				if resp.Body != nil {
-					_, _ = io.Copy(ioutil.Discard, resp.Body)
+					_, _ = io.Copy(io.Discard, resp.Body)
 					resp.Body.Close()
 				}
 			}()
@@ -138,7 +133,7 @@ func RunValidationWebhookTests(t *testing.T, gvk metav1.GroupVersionKind, valida
 func decodeResponse(t *testing.T, decoder runtime.Decoder, body io.Reader) *admissionv1beta1.AdmissionResponse {
 	t.Helper()
 
-	responseBytes, err := ioutil.ReadAll(body)
+	responseBytes, err := io.ReadAll(body)
 	require.NoError(t, err, "Failed to read response body")
 
 	response := &admissionv1beta1.AdmissionReview{}

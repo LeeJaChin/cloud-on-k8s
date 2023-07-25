@@ -15,14 +15,16 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/driver"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/events"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/name"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/reconciler"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/volume"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/watches"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/driver"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/events"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/name"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/reconciler"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/volume"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/watches"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/filesettings"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
+	ulog "github.com/elastic/cloud-on-k8s/v2/pkg/utils/log"
 )
 
 const secureSettingsSecretSuffix = "secure-settings"
@@ -36,6 +38,7 @@ const secureSettingsSecretSuffix = "secure-settings"
 // The user secret resource version is returned along with the volume, so that
 // any change in the user secret leads to pod rotation.
 func secureSettingsVolume(
+	ctx context.Context,
 	r driver.Interface,
 	hasKeystore HasKeystore,
 	labels map[string]string,
@@ -43,20 +46,31 @@ func secureSettingsVolume(
 ) (*volume.SecretVolume, string, error) {
 	// setup (or remove) watches for the user-provided secret to reconcile on any change
 	watcher := k8s.ExtractNamespacedName(hasKeystore)
-	if err := watches.WatchUserProvidedSecrets(
+
+	// user-provided Secrets referenced in the resource
+	secretSources := WatchedSecretNames(hasKeystore)
+	// user-provided Secrets referenced in a StackConfigPolicy that configures the resource
+	policySecretSources, err := filesettings.GetSecureSettingsSecretSources(ctx, r.K8sClient(), hasKeystore)
+	if err != nil {
+		return nil, "", pkgerrors.Wrap(err, "fail to get secure settings secret sources")
+	}
+	secretSources = append(secretSources, policySecretSources...)
+
+	if err := watches.WatchUserProvidedNamespacedSecrets(
 		watcher,
 		r.DynamicWatches(),
 		SecureSettingsWatchName(watcher),
-		WatchedSecretNames(hasKeystore),
+		secretSources,
 	); err != nil {
 		return nil, "", err
 	}
 
-	secrets, err := retrieveUserSecrets(r.K8sClient(), r.Recorder(), hasKeystore)
+	secrets, err := retrieveUserSecrets(ctx, r.K8sClient(), r.Recorder(), hasKeystore, secretSources)
 	if err != nil {
 		return nil, "", err
 	}
-	secret, err := reconcileSecureSettings(r.K8sClient(), hasKeystore, secrets, namer, labels)
+
+	secret, err := reconcileSecureSettings(ctx, r.K8sClient(), hasKeystore, secrets, namer, labels)
 	if err != nil {
 		return nil, "", err
 	}
@@ -79,6 +93,7 @@ func secureSettingsVolume(
 }
 
 func reconcileSecureSettings(
+	ctx context.Context,
 	c k8s.Client,
 	hasKeystore HasKeystore,
 	userSecrets []corev1.Secret,
@@ -103,26 +118,22 @@ func reconcileSecureSettings(
 	}
 	if len(aggregatedData) == 0 {
 		// no secure settings specified, delete any existing operator-managed settings secret
-		err := c.Delete(context.Background(), &expected)
-		if apierrors.IsNotFound(err) {
-			// swallow not found errors
-			return nil, nil
-		}
+		err := k8s.DeleteSecretIfExists(ctx, c, k8s.ExtractNamespacedName(&expected))
 		return nil, err
 	}
 
-	secret, err := reconciler.ReconcileSecret(c, expected, hasKeystore)
+	secret, err := reconciler.ReconcileSecret(ctx, c, expected, hasKeystore)
 	if err != nil {
 		return nil, err
 	}
 	return &secret, nil
 }
 
-func retrieveUserSecrets(c k8s.Client, recorder record.EventRecorder, hasKeystore HasKeystore) ([]corev1.Secret, error) {
-	userSecrets := make([]corev1.Secret, 0, len(hasKeystore.SecureSettings()))
-	for _, userSecretsRef := range hasKeystore.SecureSettings() {
+func retrieveUserSecrets(ctx context.Context, c k8s.Client, recorder record.EventRecorder, hasKeystore HasKeystore, userSecretSources []commonv1.NamespacedSecretSource) ([]corev1.Secret, error) {
+	userSecrets := make([]corev1.Secret, 0, len(userSecretSources))
+	for _, userSecretsRef := range userSecretSources {
 		// retrieve the secret referenced by the user in the same namespace
-		userSecret, exists, err := retrieveUserSecret(c, recorder, hasKeystore, userSecretsRef)
+		userSecret, exists, err := retrieveUserSecret(ctx, c, recorder, hasKeystore, userSecretsRef)
 		if err != nil {
 			return nil, err
 		}
@@ -135,16 +146,15 @@ func retrieveUserSecrets(c k8s.Client, recorder record.EventRecorder, hasKeystor
 	return userSecrets, nil
 }
 
-func retrieveUserSecret(c k8s.Client, recorder record.EventRecorder, hasKeystore HasKeystore, secretSrc commonv1.SecretSource) (*corev1.Secret, bool, error) {
-	namespace := hasKeystore.GetNamespace()
+func retrieveUserSecret(ctx context.Context, c k8s.Client, recorder record.EventRecorder, hasKeystore HasKeystore, secretSrc commonv1.NamespacedSecretSource) (*corev1.Secret, bool, error) {
+	secretNamespace := secretSrc.Namespace
 	secretName := secretSrc.SecretName
-
 	var userSecret corev1.Secret
-	err := c.Get(context.Background(), types.NamespacedName{Namespace: namespace, Name: secretName}, &userSecret)
+	err := c.Get(context.Background(), types.NamespacedName{Namespace: secretNamespace, Name: secretName}, &userSecret)
 	if err != nil && apierrors.IsNotFound(err) {
 		msg := "Secure settings secret not found"
-		log.Info(msg, "namespace", namespace, "secret_name", secretName)
-		recorder.Event(hasKeystore, corev1.EventTypeWarning, events.EventReasonUnexpected, msg+": "+secretName)
+		ulog.FromContext(ctx).Info(msg, "namespace", secretNamespace, "secret_name", secretName)
+		recorder.Event(hasKeystore, corev1.EventTypeWarning, events.EventReasonUnexpected, fmt.Sprintf("%s: %s/%s", msg, secretNamespace, secretName))
 		return nil, false, nil
 	} else if err != nil {
 		return nil, false, err

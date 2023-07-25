@@ -9,7 +9,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-KUBE_VERSION="${KUBE_VERSION:-1.18.0}"
+KUBE_VERSION="${KUBE_VERSION:-1.21.0}"
 
 
 TEMP_DIR="${TEMP_DIR:-$(mktemp -d -t manifest-gen-XXXXX)}"
@@ -22,7 +22,7 @@ check() {
 
     echo "[TEST] $TEST_NAME"
     # Weird stdin redirection to make ShellCheck happy. Read as: cat "${TEMP_DIR}/${TEST_NAME}.yaml" | docker run ... 
-    < "${TEMP_DIR}/${TEST_NAME}.yaml" docker run -i garethr/kubeval "-" --kubernetes-version="$KUBE_VERSION" --ignore-missing-schemas --quiet --force-color
+    < "${TEMP_DIR}/${TEST_NAME}.yaml" kubeval "-" --kubernetes-version="$KUBE_VERSION" --ignore-missing-schemas --quiet --force-color
     echo ""
 }
 
@@ -50,10 +50,6 @@ check istio
 # no defaults file that overrides all default values
 $MG --values="${SCRIPT_DIR}/testdata/no_defaults.yaml" > "${TEMP_DIR}/no_defaults.yaml"
 check no_defaults
-
-# manifest-gen with Kubernetes 1.13
-$MG --values="${SCRIPT_DIR}/testdata/kube113.yaml" > "${TEMP_DIR}/kube113.yaml"
-check kube113
 
 # manifest-gen with Kubernetes 1.16
 $MG --values="${SCRIPT_DIR}/testdata/kube116.yaml" > "${TEMP_DIR}/kube116.yaml"

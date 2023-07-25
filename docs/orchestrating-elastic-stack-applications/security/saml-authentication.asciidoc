@@ -9,9 +9,9 @@ endif::[]
 
 The Elastic Stack supports SAML single sign-on (SSO) into Kibana, using Elasticsearch as a backend service. 
 
-NOTE: Elastic Stack SSO requires a valid Enterprise license or Enterprise trial license. See <<{p}-licensing,the license documentation>> for more details about managing licenses.
+NOTE: Elastic Stack SSO requires a valid Enterprise license or Enterprise trial license. Check <<{p}-licensing,the license documentation>> for more details about managing licenses.
 
-TIP: Make sure you read the complete link:https://www.elastic.co/guide/en/elasticsearch/reference/current/saml-guide-stack.html[Configuring SAML single sign-on on the Elastic Stack] guide before setting up SAML SSO for Kibana and Elasticsearch deployments managed by ECK.
+TIP: Make sure you check the complete link:https://www.elastic.co/guide/en/elasticsearch/reference/current/saml-guide-stack.html[Configuring SAML single sign-on on the Elastic Stack] guide before setting up SAML SSO for Kibana and Elasticsearch deployments managed by ECK.
 
 == Add a SAML realm to X-Pack security settings 
 
@@ -111,11 +111,11 @@ spec:
   count: 1
   elasticsearchRef:
     name: elasticsearch-sample
-    config:
-      xpack.security.authc.providers:
-        saml.saml1:
-          order: 0
-          realm: "saml1"
+  config:
+    xpack.security.authc.providers:
+      saml.saml1:
+        order: 0
+        realm: "saml1"
 ----
 
 IMPORTANT: Your SAML users cannot login to Kibana until they are assigned roles. For more information, refer to link:https://www.elastic.co/guide/en/elasticsearch/reference/current/saml-guide-stack.html#saml-role-mapping[the Configuring role mapping section] in the Stack SAML guide.

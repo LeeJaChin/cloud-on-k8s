@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/operator"
-	controllerscheme "github.com/elastic/cloud-on-k8s/pkg/controller/common/scheme"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/operator"
+	controllerscheme "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/scheme"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 
 	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/rest"
@@ -28,8 +28,7 @@ const (
 	ControlPlaneStartTimeout = 1 * time.Minute
 	BootstrapTestEnvRetries  = 1
 
-	// CRDsRelativePath kubebuilder 2.3.1 comes with a 1.15 control plane
-	CRDsRelativePath = "../../../config/crds/v1beta1"
+	CRDsRelativePath = "../../../config/crds/v1"
 )
 
 var Config *rest.Config

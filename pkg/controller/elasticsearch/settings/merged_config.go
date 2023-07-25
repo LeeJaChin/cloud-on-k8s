@@ -10,14 +10,14 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/certificates"
-	common "github.com/elastic/cloud-on-k8s/pkg/controller/common/settings"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/volume"
-	netutil "github.com/elastic/cloud-on-k8s/pkg/utils/net"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/certificates"
+	common "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/settings"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/client"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/volume"
+	netutil "github.com/elastic/cloud-on-k8s/v2/pkg/utils/net"
 )
 
 // the name of the ES attribute indicating the pod's current k8s node
@@ -33,21 +33,15 @@ func NewMergedESConfig(
 	ipFamily corev1.IPFamily,
 	httpConfig commonv1.HTTPConfig,
 	userConfig commonv1.Config,
-	monitoringConfig commonv1.Config,
 ) (CanonicalConfig, error) {
 	userCfg, err := common.NewCanonicalConfigFrom(userConfig.Data)
 	if err != nil {
 		return CanonicalConfig{}, err
 	}
 	config := baseConfig(clusterName, ver, ipFamily).CanonicalConfig
-	monitoringCfg, err := common.NewCanonicalConfigFrom(monitoringConfig.Data)
-	if err != nil {
-		return CanonicalConfig{}, err
-	}
 	err = config.MergeWith(
 		xpackConfig(ver, httpConfig).CanonicalConfig,
 		userCfg,
-		monitoringCfg,
 	)
 	if err != nil {
 		return CanonicalConfig{}, err
@@ -81,6 +75,9 @@ func baseConfig(clusterName string, ver version.Version, ipFamily corev1.IPFamil
 		cfg[esv1.DiscoveryZenHostsProvider] = fileProvider
 	} else {
 		cfg[esv1.DiscoverySeedProviders] = fileProvider
+		// to avoid misleading error messages about the inability to connect to localhost for discovery despite us using
+		// file based discovery
+		cfg[esv1.DiscoverySeedHosts] = []string{}
 	}
 
 	return &CanonicalConfig{common.MustCanonicalConfig(cfg)}

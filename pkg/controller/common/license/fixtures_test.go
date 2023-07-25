@@ -9,15 +9,15 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
 )
 
 var (
@@ -58,7 +58,7 @@ var emptyTrialLicenseFixture = EnterpriseLicense{
 }
 
 func externallySignedLicenseFixture() (EnterpriseLicense, error) {
-	exptectedBytes, err := ioutil.ReadFile("testdata/externally-generated-lic.json")
+	exptectedBytes, err := os.ReadFile("testdata/externally-generated-lic.json")
 	if err != nil {
 		return EnterpriseLicense{}, err
 	}
@@ -76,7 +76,7 @@ func withSignature(l EnterpriseLicense, sig []byte) EnterpriseLicense {
 	return l
 }
 
-func asRuntimeObject(l EnterpriseLicense) runtime.Object {
+func asClientObject(l EnterpriseLicense) client.Object {
 	bytes, err := json.Marshal(l)
 	if err != nil {
 		panic(err)
@@ -87,9 +87,9 @@ func asRuntimeObject(l EnterpriseLicense) runtime.Object {
 			Namespace: "test-system",
 			Name:      fmt.Sprintf("test-%s-license", string(l.License.Type)),
 			Labels: map[string]string{
-				common.TypeLabelName: Type,
-				LicenseLabelScope:    string(LicenseScopeOperator),
-				LicenseLabelType:     string(l.License.Type),
+				commonv1.TypeLabelName: Type,
+				LicenseLabelScope:      string(LicenseScopeOperator),
+				LicenseLabelType:       string(l.License.Type),
 			},
 		},
 		Data: map[string][]byte{
@@ -98,9 +98,9 @@ func asRuntimeObject(l EnterpriseLicense) runtime.Object {
 	}
 }
 
-func asRuntimeObjects(l EnterpriseLicense, sig []byte) []runtime.Object {
-	return []runtime.Object{
-		asRuntimeObject(withSignature(l, sig)),
+func asClientObjects(l EnterpriseLicense, sig []byte) []client.Object {
+	return []client.Object{
+		asClientObject(withSignature(l, sig)),
 	}
 }
 

@@ -2,7 +2,7 @@
 // or more contributor license agreements. Licensed under the Elastic License 2.0;
 // you may not use this file except in compliance with the Elastic License 2.0.
 
-// +build apm e2e
+//go:build apm || e2e
 
 package apm
 
@@ -11,17 +11,18 @@ import (
 	"fmt"
 	"testing"
 
-	apmv1 "github.com/elastic/cloud-on-k8s/pkg/apis/apm/v1"
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/annotation"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/events"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/apmserver"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/elasticsearch"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/kibana"
 	corev1 "k8s.io/api/core/v1"
+
+	apmv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/apm/v1"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/annotation"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/events"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/apmserver"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/elasticsearch"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/kibana"
 )
 
 // TestCrossNSAssociation tests associating Elasticsearch and an APM Server running in different namespaces.
@@ -42,7 +43,8 @@ func TestCrossNSAssociation(t *testing.T) {
 		WithConfig(map[string]interface{}{
 			"apm-server.ilm.enabled":                           false,
 			"setup.template.settings.index.number_of_replicas": 0, // avoid ES yellow state on a 1 node ES cluster
-		})
+		}).
+		WithoutIntegrationCheck()
 
 	test.Sequence(nil, test.EmptySteps, esBuilder, apmBuilder).RunSequential(t)
 }
@@ -66,7 +68,8 @@ func TestAPMKibanaAssociation(t *testing.T) {
 		WithNamespace(ns).
 		WithElasticsearchRef(esBuilder.Ref()).
 		WithNodeCount(1).
-		WithRestrictedSecurityContext()
+		WithRestrictedSecurityContext().
+		WithAPMIntegration()
 
 	apmBuilder := apmserver.NewBuilder(name).
 		WithNamespace(ns).
@@ -88,7 +91,8 @@ func TestAPMAssociationWithNonExistentES(t *testing.T) {
 		WithElasticsearchRef(commonv1.ObjectSelector{
 			Name: "non-existent-es",
 		}).
-		WithNodeCount(1)
+		WithNodeCount(1).
+		WithoutIntegrationCheck()
 
 	k := test.NewK8sClientOrFatal()
 	steps := test.StepList{}
@@ -122,7 +126,8 @@ func TestAPMAssociationWhenReferencedESDisappears(t *testing.T) {
 		WithESMasterDataNodes(3, elasticsearch.DefaultResources)
 	apmBuilder := apmserver.NewBuilder(name).
 		WithElasticsearchRef(esBuilder.Ref()).
-		WithNodeCount(1)
+		WithNodeCount(1).
+		WithoutIntegrationCheck()
 
 	failureSteps := func(k *test.K8sClient) test.StepList {
 		return test.StepList{

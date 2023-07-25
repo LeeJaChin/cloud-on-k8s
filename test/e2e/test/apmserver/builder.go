@@ -11,23 +11,27 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	apmv1 "github.com/elastic/cloud-on-k8s/pkg/apis/apm/v1"
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
-	"github.com/elastic/cloud-on-k8s/test/e2e/cmd/run"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test"
+	apmv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/apm/v1"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/cmd/run"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
 )
 
 // Builder to create APM Servers
 type Builder struct {
 	ApmServer apmv1.ApmServer
+
+	MutatedFrom *Builder
 }
 
 var _ test.Builder = Builder{}
 var _ test.Subject = Builder{}
 
 func (b Builder) SkipTest() bool {
-	return false
+	// APM doesn't work in 8.5.3, see https://github.com/elastic/apm-server/issues/10089.
+	return test.Ctx().ElasticStackVersion == "8.5.3"
 }
 
 func NewBuilder(name string) Builder {
@@ -43,7 +47,6 @@ func newBuilder(name, randSuffix string) Builder {
 		Name:      name,
 		Namespace: test.Ctx().ManagedNamespace(0),
 	}
-
 	return Builder{
 		ApmServer: apmv1.ApmServer{
 			ObjectMeta: meta,
@@ -105,6 +108,17 @@ func (b Builder) WithKibanaRef(ref commonv1.ObjectSelector) Builder {
 	return b
 }
 
+func (b Builder) DeepCopy() *Builder {
+	apm := b.ApmServer.DeepCopy()
+	builderCopy := Builder{
+		ApmServer: *apm,
+	}
+	if b.MutatedFrom != nil {
+		builderCopy.MutatedFrom = b.MutatedFrom.DeepCopy()
+	}
+	return &builderCopy
+}
+
 func (b Builder) WithConfig(cfg map[string]interface{}) Builder {
 	if b.ApmServer.Spec.Config == nil || b.ApmServer.Spec.Config.Data == nil {
 		b.ApmServer.Spec.Config = &commonv1.Config{
@@ -113,10 +127,12 @@ func (b Builder) WithConfig(cfg map[string]interface{}) Builder {
 		return b
 	}
 
+	newBuilder := b.DeepCopy()
+
 	for k, v := range cfg {
-		b.ApmServer.Spec.Config.Data[k] = v
+		newBuilder.ApmServer.Spec.Config.Data[k] = v
 	}
-	return b
+	return *newBuilder
 }
 
 func (b Builder) WithRUM(enabled bool) Builder {
@@ -146,6 +162,26 @@ func (b Builder) WithPodLabel(key, value string) Builder {
 	}
 	labels[key] = value
 	b.ApmServer.Spec.PodTemplate.Labels = labels
+	return b
+}
+
+// WithoutIntegrationCheck adds APM Server configuration that prevents APM Server from checking for APM index templates.
+// Starting with 8.0.0, these templates are installed by APM integration. As all integrations are installed through
+// Kibana, when there is no Kibana in the deployment, the index templates are not present and our E2E tests checks
+// would fail.
+func (b Builder) WithoutIntegrationCheck() Builder {
+	if version.MustParse(b.ApmServer.Spec.Version).LT(version.MinFor(8, 0, 0)) {
+		// disabling integration check is not necessary below 8.0.0, no-op
+		return b
+	}
+
+	return b.WithConfig(map[string]interface{}{
+		"apm-server.data_streams.wait_for_integration": false,
+	})
+}
+
+func (b Builder) WithMutatedFrom(builder *Builder) Builder {
+	b.MutatedFrom = builder
 	return b
 }
 

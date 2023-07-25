@@ -7,7 +7,7 @@ package license
 import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
 )
 
 const (
@@ -21,7 +21,7 @@ const (
 	LicenseInvalidAnnotation = "license.k8s.elastic.co/invalid"
 )
 
-type LicenseScope string
+type LicenseScope string //nolint:revive
 
 const (
 	LicenseScopeOperator      LicenseScope = "operator"
@@ -31,9 +31,9 @@ const (
 // LabelsForOperatorScope creates a map of labels for operator scope with licence type set to the given value.
 func LabelsForOperatorScope(t OperatorLicenseType) map[string]string {
 	return map[string]string{
-		common.TypeLabelName: Type,
-		LicenseLabelScope:    string(LicenseScopeOperator),
-		LicenseLabelType:     string(t),
+		commonv1.TypeLabelName: Type,
+		LicenseLabelScope:      string(LicenseScopeOperator),
+		LicenseLabelType:       string(t),
 	}
 }
 

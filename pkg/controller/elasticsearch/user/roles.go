@@ -7,10 +7,10 @@ package user
 import (
 	"fmt"
 
-	beatv1beta1 "github.com/elastic/cloud-on-k8s/pkg/apis/beat/v1beta1"
-	esclient "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
+	"gopkg.in/yaml.v3"
 
-	"gopkg.in/yaml.v2"
+	beatv1beta1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/beat/v1beta1"
+	esclient "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/client"
 )
 
 const (
@@ -19,6 +19,8 @@ const (
 
 	// SuperUserBuiltinRole is the name of the built-in superuser role.
 	SuperUserBuiltinRole = "superuser"
+	// ClusterManageRole is the name of a custom role to manage the cluster.
+	ClusterManageRole = "elastic-internal_cluster_manage"
 	// ProbeUserRole is the name of the role used by the internal probe user.
 	ProbeUserRole = "elastic_internal_probe_user"
 	// RemoteMonitoringCollectorBuiltinRole is the name of the built-in remote_monitoring_collector role.
@@ -30,6 +32,10 @@ const (
 	ApmUserRoleV7 = "eck_apm_user_role_v7"
 	// ApmUserRoleV75 is the name of the role used by APMServer instances to connect to Elasticsearch from version 7.5
 	ApmUserRoleV75 = "eck_apm_user_role_v75"
+	// ApmUserRoleV80 is the name of the role used by APMServer instances to connect to Elasticsearch from version 8.0
+	ApmUserRoleV80 = "eck_apm_user_role_v80"
+	// ApmUserRoleV87 is the name of the role used by APMServer instances to connect to Elasticsearch from version 8.7
+	ApmUserRoleV87 = "eck_apm_user_role_v87"
 
 	// ApmAgentUserRole is the name of the role used by APMServer instances to connect to Kibana
 	ApmAgentUserRole = "eck_apm_agent_user_role"
@@ -37,6 +43,10 @@ const (
 	// StackMonitoringMetricsUserRole is the name of the role used by Metricbeat and Filebeat to send metrics and log
 	// data to the monitoring Elasticsearch cluster when Stack Monitoring is enabled
 	StackMonitoringUserRole = "eck_stack_mon_user_role"
+
+	FleetAdminUserRole = "eck_fleet_admin_user_role"
+
+	LogstashUserRole = "eck_logstash_user_role"
 
 	// V70 indicates version 7.0
 	V70 = "v70"
@@ -54,7 +64,8 @@ const (
 var (
 	// PredefinedRoles to create for internal needs.
 	PredefinedRoles = RolesFileContent{
-		ProbeUserRole: esclient.Role{Cluster: []string{"monitor"}},
+		ProbeUserRole:     esclient.Role{Cluster: []string{"monitor"}},
+		ClusterManageRole: esclient.Role{Cluster: []string{"manage"}},
 		ApmUserRoleV6: esclient.Role{
 			Cluster: []string{"monitor", "manage_index_templates"},
 			Indices: []esclient.IndexRole{
@@ -79,6 +90,40 @@ var (
 				{
 					Names:      []string{"apm-*"},
 					Privileges: []string{"manage", "create_doc", "create_index"},
+				},
+			},
+		},
+		ApmUserRoleV80: esclient.Role{
+			Cluster: []string{"cluster:monitor/main", "manage_index_templates"},
+			Indices: []esclient.IndexRole{
+				{
+					Names:      []string{"traces-apm*", "metrics-apm*", "logs-apm*"},
+					Privileges: []string{"auto_configure", "create_doc"},
+				},
+				{
+					Names:      []string{"traces-apm.sampled-*"},
+					Privileges: []string{"maintenance", "monitor", "read"},
+				},
+			},
+		},
+		ApmUserRoleV87: esclient.Role{
+			Cluster: []string{"cluster:monitor/main", "manage_index_templates"},
+			Indices: []esclient.IndexRole{
+				{
+					Names:      []string{"traces-apm*", "metrics-apm*", "logs-apm*"},
+					Privileges: []string{"auto_configure", "create_doc"},
+				},
+				{
+					Names:      []string{"traces-apm.sampled-*"},
+					Privileges: []string{"maintenance", "monitor", "read"},
+				},
+				{
+					Names:      []string{".apm-agent-configuration", ".apm-source-map"},
+					Privileges: []string{"read"},
+					AllowRestrictedIndices: func() *bool {
+						allow := true
+						return &allow
+					}(),
 				},
 			},
 		},
@@ -118,6 +163,31 @@ var (
 				{
 					Names:      []string{"filebeat-*"},
 					Privileges: []string{"manage", "read", "create_doc", "view_index_metadata", "create_index"},
+				},
+			},
+		},
+		FleetAdminUserRole: esclient.Role{
+			Applications: []esclient.ApplicationRole{
+				{
+					Application: "kibana-.kibana",
+					Resources:   []string{"*"},
+					Privileges:  []string{"feature_fleet.all", "feature_fleetv2.all"},
+				},
+			},
+		},
+		LogstashUserRole: esclient.Role{
+			Cluster: []string{
+				"monitor",
+				"manage_ilm",
+				"read_ilm",
+				"manage_logstash_pipelines",
+				"manage_index_templates",
+				"cluster:admin/ingest/pipeline/get",
+			},
+			Indices: []esclient.IndexRole{
+				{
+					Names:      []string{"logstash", "logstash-*", "ecs-logstash", "ecs-logstash-*", "logs-*", "metrics-*", "synthetics-*", "traces-*"},
+					Privileges: []string{"manage", "write", "create_index", "read", "view_index_metadata"},
 				},
 			},
 		},

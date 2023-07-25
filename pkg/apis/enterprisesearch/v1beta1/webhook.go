@@ -11,12 +11,17 @@ import (
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
-	ulog "github.com/elastic/cloud-on-k8s/pkg/utils/log"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	ulog "github.com/elastic/cloud-on-k8s/v2/pkg/utils/log"
+)
+
+const (
+	// webhookPath is the HTTP path for the Enterprise Search validating webhook.
+	webhookPath = "/validate-enterprisesearch-k8s-elastic-co-v1beta1-enterprisesearch"
 )
 
 var (
@@ -38,33 +43,38 @@ var (
 
 var _ webhook.Validator = &EnterpriseSearch{}
 
-func (ent *EnterpriseSearch) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(ent).
-		Complete()
-}
-
-func (ent *EnterpriseSearch) ValidateCreate() error {
+// ValidateCreate is called by the validating webhook to validate the create operation.
+// Satisfies the webhook.Validator interface.
+func (ent *EnterpriseSearch) ValidateCreate() (admission.Warnings, error) {
 	validationLog.V(1).Info("Validate create", "name", ent.Name)
 	return ent.validate(nil)
 }
 
-func (ent *EnterpriseSearch) ValidateDelete() error {
+// ValidateDelete is called by the validating webhook to validate the delete operation.
+// Satisfies the webhook.Validator interface.
+func (ent *EnterpriseSearch) ValidateDelete() (admission.Warnings, error) {
 	validationLog.V(1).Info("Validate delete", "name", ent.Name)
-	return nil
+	return nil, nil
 }
 
-func (ent *EnterpriseSearch) ValidateUpdate(old runtime.Object) error {
+// ValidateUpdate is called by the validating webhook to validate the update operation.
+// Satisfies the webhook.Validator interface.
+func (ent *EnterpriseSearch) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
 	validationLog.V(1).Info("Validate update", "name", ent.Name)
 	oldObj, ok := old.(*EnterpriseSearch)
 	if !ok {
-		return errors.New("cannot cast old object to EnterpriseSearch type")
+		return nil, errors.New("cannot cast old object to EnterpriseSearch type")
 	}
 
 	return ent.validate(oldObj)
 }
 
-func (ent *EnterpriseSearch) validate(old *EnterpriseSearch) error {
+// WebhookPath returns the HTTP path used by the validating webhook.
+func (ent *EnterpriseSearch) WebhookPath() string {
+	return webhookPath
+}
+
+func (ent *EnterpriseSearch) validate(old *EnterpriseSearch) (admission.Warnings, error) {
 	var errors field.ErrorList
 	if old != nil {
 		for _, uc := range updateChecks {
@@ -74,7 +84,7 @@ func (ent *EnterpriseSearch) validate(old *EnterpriseSearch) error {
 		}
 
 		if len(errors) > 0 {
-			return apierrors.NewInvalid(groupKind, ent.Name, errors)
+			return nil, apierrors.NewInvalid(groupKind, ent.Name, errors)
 		}
 	}
 
@@ -85,9 +95,9 @@ func (ent *EnterpriseSearch) validate(old *EnterpriseSearch) error {
 	}
 
 	if len(errors) > 0 {
-		return apierrors.NewInvalid(groupKind, ent.Name, errors)
+		return nil, apierrors.NewInvalid(groupKind, ent.Name, errors)
 	}
-	return nil
+	return nil, nil
 }
 
 func checkNoUnknownFields(ent *EnterpriseSearch) field.ErrorList {
@@ -103,5 +113,8 @@ func checkSupportedVersion(ent *EnterpriseSearch) field.ErrorList {
 }
 
 func checkNoDowngrade(prev, curr *EnterpriseSearch) field.ErrorList {
+	if commonv1.IsConfiguredToAllowDowngrades(curr) {
+		return nil
+	}
 	return commonv1.CheckNoDowngrade(prev.Spec.Version, curr.Spec.Version)
 }

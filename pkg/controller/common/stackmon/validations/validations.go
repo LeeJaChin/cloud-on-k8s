@@ -10,15 +10,16 @@ import (
 	"github.com/blang/semver/v4"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/stackmon/monitoring"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/stackmon/monitoring"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
 )
 
 const (
-	unsupportedVersionMsg       = "Unsupported version for Stack Monitoring. Required >= %s."
-	invalidElasticsearchRefsMsg = "Only one Elasticsearch reference is supported for %s Stack Monitoring"
+	UnsupportedVersionMsg       = "Unsupported version for Stack Monitoring. Required >= %s."
+	InvalidElasticsearchRefsMsg = "Only one Elasticsearch reference is supported for %s Stack Monitoring"
 
 	InvalidKibanaElasticsearchRefForStackMonitoringMsg = "Kibana must be associated to an Elasticsearch cluster through elasticsearchRef in order to enable monitoring metrics features"
+	InvalidBeatsElasticsearchRefForStackMonitoringMsg  = "Beats must be associated to an Elasticsearch cluster through elasticsearchRef in order to enable monitoring metrics features"
 )
 
 var (
@@ -30,37 +31,37 @@ var (
 
 // Validate validates that the resource version is supported for Stack Monitoring and that there is exactly one
 // Elasticsearch reference defined to send monitoring data when Stack Monitoring is defined
-func Validate(resource monitoring.HasMonitoring, version string) field.ErrorList {
+func Validate(resource monitoring.HasMonitoring, version string, minVersion version.Version) field.ErrorList {
 	var errs field.ErrorList
 	if monitoring.IsDefined(resource) {
-		err := IsSupportedVersion(version)
+		err := IsSupportedVersion(version, minVersion)
 		if err != nil {
-			finalMinStackVersion, _ := semver.FinalizeVersion(MinStackVersion.String()) // discards prerelease suffix
+			finalMinStackVersion, _ := semver.FinalizeVersion(minVersion.String()) // discards prerelease suffix
 			errs = append(errs, field.Invalid(field.NewPath("spec").Child("version"), version,
-				fmt.Sprintf(unsupportedVersionMsg, finalMinStackVersion)))
+				fmt.Sprintf(UnsupportedVersionMsg, finalMinStackVersion)))
 		}
 	}
 	refs := resource.GetMonitoringMetricsRefs()
 	if monitoring.AreEsRefsDefined(refs) && len(refs) != 1 {
 		errs = append(errs, field.Invalid(field.NewPath("spec").Child("monitoring").Child("metrics").Child("elasticsearchRefs"),
-			refs, fmt.Sprintf(invalidElasticsearchRefsMsg, "Metrics")))
+			refs, fmt.Sprintf(InvalidElasticsearchRefsMsg, "Metrics")))
 	}
 	refs = resource.GetMonitoringLogsRefs()
 	if monitoring.AreEsRefsDefined(refs) && len(refs) != 1 {
 		errs = append(errs, field.Invalid(field.NewPath("spec").Child("monitoring").Child("logs").Child("elasticsearchRefs"),
-			refs, fmt.Sprintf(invalidElasticsearchRefsMsg, "Logs")))
+			refs, fmt.Sprintf(InvalidElasticsearchRefsMsg, "Logs")))
 	}
 	return errs
 }
 
-// IsSupportedVersion returns true if the resource version is supported for Stack Monitoring, else returns false
-func IsSupportedVersion(v string) error {
+// IsSupportedVersion returns error if the resource version is not supported for Stack Monitoring
+func IsSupportedVersion(v string, minVersion version.Version) error {
 	ver, err := version.Parse(v)
 	if err != nil {
 		return err
 	}
-	if ver.LT(MinStackVersion) {
-		return fmt.Errorf("unsupported version for Stack Monitoring: required >= %s", MinStackVersion)
+	if ver.LT(minVersion) {
+		return fmt.Errorf("unsupported version for Stack Monitoring: required >= %s", minVersion)
 	}
 	return nil
 }

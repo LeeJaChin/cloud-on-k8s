@@ -6,13 +6,19 @@ package events
 
 // Event reasons for the Elastic stack controller
 const (
-	// EventReasonCreated describes events where resources were created.
-	EventReasonCreated = "Created"
-	// EventReasonDeleted describes events where resources were deleted.
-	EventReasonDeleted = "Deleted"
+	// EventReasonDeprecated describes events that were due to a deprecated resource being submitted by the user.
+	EventReasonDeprecated = "Deprecated"
 	// EventReasonDelayed describes events where a requested change was delayed e.g. to prevent data loss.
 	EventReasonDelayed = "Delayed"
-	// EventReasonCreated describes events where resources are upgraded.
+	// EventReasonInvalidLicense describes events where a user configured an invalid license for the operator.
+	EventReasonInvalidLicense = "InvalidLicense"
+	// EventReasonStalled describes events where a requested change is stalled and may not make progress without user
+	// intervention. There are transient states e.g. during a nodeSet rename where shards still do not have a place to
+	// move to until the new nodes come up and Elasticsearch will report a stalled shutdown. There are however also
+	// permanent states if the new topology requested by the user does not have enough space for the shards which requires
+	// user intervention to correct the mistake.
+	EventReasonStalled = "Stalled"
+	// EventReasonUpgraded describes events where resources are upgraded.
 	EventReasonUpgraded = "Upgraded"
 	// EventReasonUnhealthy describes events where a stack deployments health was affected negatively.
 	EventReasonUnhealthy = "Unhealthy"
@@ -20,10 +26,6 @@ const (
 	EventReasonUnexpected = "Unexpected"
 	// EventReasonValidation describes events that were due to an invalid resource being submitted by the user.
 	EventReasonValidation = "Validation"
-	// EventReasonStateChange describes events that are expected state changes in an Elasticsearch cluster.
-	EventReasonStateChange = "StateChange"
-	// EventReasonRestart describes events where one or multiple Elasticsearch nodes are scheduled for a restart.
-	EventReasonRestart = "Restart"
 )
 
 // Event reasons for Association controllers
@@ -38,8 +40,6 @@ const (
 const (
 	// EventReconciliationError describes an error detected during reconciliation of an object.
 	EventReconciliationError = "ReconciliationError"
-	// EventCompatCheckError describes an error during the check for compatibility between operator version and managed resources.
-	EventCompatCheckError = "CompatibilityCheckError"
 )
 
 // Event is a k8s event that can be recorded via an event recorder.

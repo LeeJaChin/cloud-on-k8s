@@ -12,10 +12,11 @@ import (
 )
 
 func TestCanonicalConfig_Render(t *testing.T) {
-	config := MustCanonicalConfig(map[string]string{
+	config := MustCanonicalConfig(map[string]interface{}{
 		"aaa":        "aa  a",
 		"bbb":        "b  bb",
 		"aab":        "a a a",
+		"key":        map[string]interface{}{"emptyarray": []string{}},
 		"withquotes": "aa\"bb\"aa",
 		"zz":         "zzz  z z z",
 	})
@@ -24,10 +25,12 @@ func TestCanonicalConfig_Render(t *testing.T) {
 	expected := []byte(`aaa: aa  a
 aab: a a a
 bbb: b  bb
+key:
+    emptyarray: []
 withquotes: aa"bb"aa
 zz: zzz  z z z
 `)
-	require.Equal(t, expected, output)
+	require.Equal(t, string(expected), string(output))
 }
 
 func TestCanonicalConfig_MergeWith(t *testing.T) {
@@ -410,6 +413,47 @@ func TestCanonicalConfig_SetStrings(t *testing.T) {
 	}
 }
 
+func TestCanonicalConfig_String(t *testing.T) {
+	tests := []struct {
+		name    string
+		c       *CanonicalConfig
+		key     string
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "gets a string value",
+			c: MustCanonicalConfig(map[string]interface{}{
+				"foo": map[string]string{
+					"bar": "baz",
+				},
+			}),
+			key:     "foo.bar",
+			want:    "baz",
+			wantErr: false,
+		},
+		{
+			name: "when value is not convertible to a string",
+			c: MustCanonicalConfig(map[string]interface{}{
+				"foo": []string{"bar"},
+			}),
+			key:     "foo",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, err := tt.c.String(tt.key)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CanonicalConfig.String() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err == nil {
+				require.Equal(t, tt.want, value)
+			}
+		})
+	}
+}
+
 func TestNewCanonicalConfigFrom(t *testing.T) {
 	type args struct {
 		data untypedDict
@@ -444,6 +488,73 @@ func TestNewCanonicalConfigFrom(t *testing.T) {
 			}
 			if diff := got.Diff(tt.want, nil); len(diff) > 0 {
 				t.Error(diff)
+			}
+		})
+	}
+}
+
+func TestCanonicalConfig_HasChildConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		c    *CanonicalConfig
+		key  string
+		want bool
+	}{
+		{
+			name: "nil config",
+			c:    nil,
+			key:  "x",
+			want: false,
+		},
+		{
+			name: "empty config",
+			c:    MustCanonicalConfig(map[string]interface{}{}),
+			key:  "x",
+			want: false,
+		},
+		{
+			name: "valid top-level key but not a child config",
+			c: MustCanonicalConfig(map[string]interface{}{
+				"x": "y",
+			}),
+			key:  "x",
+			want: false,
+		},
+		{
+			name: "valid top level key",
+			c: MustCanonicalConfig(map[string]interface{}{
+				"x": map[string]interface{}{
+					"y": "1",
+					"z": "2",
+				},
+			}),
+			key:  "x",
+			want: true,
+		},
+		{
+			name: "valid nested  key",
+			c: MustCanonicalConfig(map[string]interface{}{
+				"x": map[string]interface{}{
+					"y": map[string]interface{}{},
+					"z": "2",
+				},
+			}),
+			key:  "x.y",
+			want: true,
+		},
+		{
+			name: "absent key",
+			c: MustCanonicalConfig(map[string]interface{}{
+				"x": "y",
+			}),
+			key:  "z",
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.c.HasChildConfig(tt.key); got != tt.want {
+				t.Errorf("HasChildConfig() = %v, want %v", got, tt.want)
 			}
 		})
 	}

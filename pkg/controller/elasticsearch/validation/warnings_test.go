@@ -7,8 +7,8 @@ package validation
 import (
 	"testing"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
 )
 
 func Test_noUnsupportedSettings(t *testing.T) {
@@ -116,6 +116,42 @@ func Test_noUnsupportedSettings(t *testing.T) {
 										"initial_master_nodes": []string{"foo", "bar"},
 									},
 									"node.attr.box_type": "foo",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectErrors: true,
+		},
+		{
+			name: "supported client auth setting and value combination OK",
+			es: esv1.Elasticsearch{
+				Spec: esv1.ElasticsearchSpec{
+					Version: "7.0.0",
+					NodeSets: []esv1.NodeSet{
+						{
+							Config: &commonv1.Config{
+								Data: map[string]interface{}{
+									esv1.XPackSecurityHttpSslClientAuthentication: "optional",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectErrors: false,
+		},
+		{
+			name: "unsupported client auth setting and value combination",
+			es: esv1.Elasticsearch{
+				Spec: esv1.ElasticsearchSpec{
+					Version: "7.0.0",
+					NodeSets: []esv1.NodeSet{
+						{
+							Config: &commonv1.Config{
+								Data: map[string]interface{}{
+									esv1.XPackSecurityHttpSslClientAuthentication: "required",
 								},
 							},
 						},

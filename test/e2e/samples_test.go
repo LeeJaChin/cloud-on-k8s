@@ -2,7 +2,7 @@
 // or more contributor license agreements. Licensed under the Elastic License 2.0;
 // you may not use this file except in compliance with the Elastic License 2.0.
 
-// +build mixed e2e
+//go:build mixed || e2e
 
 package e2e
 
@@ -10,18 +10,22 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	"github.com/elastic/cloud-on-k8s/test/e2e/cmd/run"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/apmserver"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/elasticsearch"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/enterprisesearch"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/helper"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/kibana"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/util/rand"
+
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	logstashv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/logstash/v1alpha1"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/cmd/run"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/apmserver"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/elasticsearch"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/enterprisesearch"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/helper"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/kibana"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/logstash"
 )
 
 func TestSamples(t *testing.T) {
@@ -51,11 +55,19 @@ func createBuilders(t *testing.T, decoder *helper.YAMLDecoder, sampleFile, testN
 		fullTestName := "TestSamples-" + testName
 		switch b := builder.(type) {
 		case elasticsearch.Builder:
-			return b.WithNamespace(namespace).
+			b = b.WithNamespace(namespace).
 				WithSuffix(suffix).
 				WithRestrictedSecurityContext().
 				WithLabel(run.TestNameLabel, fullTestName).
 				WithPodLabel(run.TestNameLabel, fullTestName)
+			// for EKS, we set our e2e storage class to use local volumes instead of depending on the default storage class that uses
+			// network storage because from k8s 1.23 network storage requires the installation of the Amazon EBS CSI driver and the
+			// deployer does not yet support this. See https://github.com/elastic/cloud-on-k8s/issues/6515.
+			if strings.HasPrefix(test.Ctx().Provider, "eks") {
+				b = b.WithDefaultPersistentVolumes()
+			}
+			return b
+
 		case kibana.Builder:
 			return b.WithNamespace(namespace).
 				WithSuffix(suffix).
@@ -71,7 +83,8 @@ func createBuilders(t *testing.T, decoder *helper.YAMLDecoder, sampleFile, testN
 				WithConfig(map[string]interface{}{"apm-server.ilm.enabled": false}).
 				WithRestrictedSecurityContext().
 				WithLabel(run.TestNameLabel, fullTestName).
-				WithPodLabel(run.TestNameLabel, fullTestName)
+				WithPodLabel(run.TestNameLabel, fullTestName).
+				WithoutIntegrationCheck()
 		case enterprisesearch.Builder:
 			return b.WithNamespace(namespace).
 				WithSuffix(suffix).
@@ -79,6 +92,33 @@ func createBuilders(t *testing.T, decoder *helper.YAMLDecoder, sampleFile, testN
 				WithRestrictedSecurityContext().
 				WithLabel(run.TestNameLabel, fullTestName).
 				WithPodLabel(run.TestNameLabel, fullTestName)
+		case logstash.Builder:
+			esRefs := make([]logstashv1alpha1.ElasticsearchCluster, 0, len(b.Logstash.Spec.ElasticsearchRefs))
+			for _, ref := range b.Logstash.Spec.ElasticsearchRefs {
+				esRefs = append(esRefs, logstashv1alpha1.ElasticsearchCluster{
+					ObjectSelector: tweakServiceRef(ref.ObjectSelector, suffix),
+					ClusterName:    ref.ClusterName,
+				})
+			}
+			metricsRefs := make([]commonv1.ObjectSelector, 0, len(b.Logstash.Spec.Monitoring.Metrics.ElasticsearchRefs))
+			for _, ref := range b.Logstash.Spec.Monitoring.Metrics.ElasticsearchRefs {
+				metricsRefs = append(metricsRefs, tweakServiceRef(ref, suffix))
+			}
+			logRefs := make([]commonv1.ObjectSelector, 0, len(b.Logstash.Spec.Monitoring.Logs.ElasticsearchRefs))
+			for _, ref := range b.Logstash.Spec.Monitoring.Logs.ElasticsearchRefs {
+				logRefs = append(logRefs, tweakServiceRef(ref, suffix))
+			}
+
+			return b.WithNamespace(namespace).
+				WithSuffix(suffix).
+				WithElasticsearchRefs(esRefs...).
+				WithMetricsMonitoring(metricsRefs...).
+				WithLogsMonitoring(logRefs...).
+				WithRestrictedSecurityContext().
+				WithLabel(run.TestNameLabel, fullTestName).
+				WithPodLabel(run.TestNameLabel, fullTestName).
+				WithTestStorageClass()
+
 		default:
 			return b
 		}

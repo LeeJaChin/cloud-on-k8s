@@ -16,16 +16,16 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/pointer"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/comparison"
-	controllerscheme "github.com/elastic/cloud-on-k8s/pkg/controller/common/scheme"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/label"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/comparison"
+	controllerscheme "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/scheme"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/label"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 var (
@@ -35,14 +35,14 @@ var (
 	sampleClaim = corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "sample-claim"},
 		Spec: corev1.PersistentVolumeClaimSpec{
-			StorageClassName: pointer.StringPtr(sampleStorageClass.Name),
+			StorageClassName: pointer.String(sampleStorageClass.Name),
 			Resources: corev1.ResourceRequirements{Requests: map[corev1.ResourceName]resource.Quantity{
 				corev1.ResourceStorage: resource.MustParse("1Gi"),
 			}}}}
 	sampleClaim2 = corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "sample-claim-2"},
 		Spec: corev1.PersistentVolumeClaimSpec{
-			StorageClassName: pointer.StringPtr(sampleStorageClass.Name),
+			StorageClassName: pointer.String(sampleStorageClass.Name),
 			Resources: corev1.ResourceRequirements{Requests: map[corev1.ResourceName]resource.Quantity{
 				corev1.ResourceStorage: resource.MustParse("1Gi"),
 			}}}}
@@ -51,7 +51,7 @@ var (
 )
 
 func withVolumeExpansion(sc storagev1.StorageClass) *storagev1.StorageClass {
-	sc.AllowVolumeExpansion = pointer.BoolPtr(true)
+	sc.AllowVolumeExpansion = pointer.Bool(true)
 	return &sc
 }
 
@@ -72,7 +72,7 @@ func Test_handleVolumeExpansion(t *testing.T) {
 	sset := appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "sample-sset"},
 		Spec: appsv1.StatefulSetSpec{
-			Replicas:             pointer.Int32Ptr(3),
+			Replicas:             pointer.Int32(3),
 			VolumeClaimTemplates: []corev1.PersistentVolumeClaim{sampleClaim},
 		},
 	}
@@ -88,8 +88,8 @@ func Test_handleVolumeExpansion(t *testing.T) {
 		}
 		return pvcs
 	}
-	pvcPtrs := func(pvcs []corev1.PersistentVolumeClaim) []runtime.Object {
-		var ptrs []runtime.Object
+	pvcPtrs := func(pvcs []corev1.PersistentVolumeClaim) []client.Object {
+		var ptrs []client.Object
 		for i := range pvcs {
 			ptrs = append(ptrs, &pvcs[i])
 		}
@@ -104,7 +104,7 @@ func Test_handleVolumeExpansion(t *testing.T) {
 	tests := []struct {
 		name         string
 		args         args
-		runtimeObjs  []runtime.Object
+		runtimeObjs  []client.Object
 		expectedPVCs []corev1.PersistentVolumeClaim
 		wantErr      bool
 		wantRecreate bool
@@ -192,7 +192,7 @@ func Test_handleVolumeExpansion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			k8sClient := k8s.NewFakeClient(append(tt.runtimeObjs, &es)...)
-			recreate, err := handleVolumeExpansion(k8sClient, es, tt.args.expectedSset, tt.args.actualSset, tt.args.validateStorageClass)
+			recreate, err := handleVolumeExpansion(context.Background(), k8sClient, es, tt.args.expectedSset, tt.args.actualSset, tt.args.validateStorageClass)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("handleVolumeExpansion() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -304,7 +304,7 @@ func Test_recreateStatefulSets(t *testing.T) {
 	sset2JSON := string(sset2Bytes)
 
 	type args struct {
-		runtimeObjs []runtime.Object
+		runtimeObjs []client.Object
 		es          esv1.Elasticsearch
 	}
 	tests := []struct {
@@ -318,7 +318,7 @@ func Test_recreateStatefulSets(t *testing.T) {
 		{
 			name: "no annotation: nothing to do",
 			args: args{
-				runtimeObjs: []runtime.Object{sset1, pod1},
+				runtimeObjs: []client.Object{sset1, pod1},
 				es:          *es(),
 			},
 			wantES:          *es(),
@@ -328,7 +328,7 @@ func Test_recreateStatefulSets(t *testing.T) {
 		{
 			name: "StatefulSet to delete",
 			args: args{
-				runtimeObjs: []runtime.Object{sset1, pod1}, // sset exists with the same UID
+				runtimeObjs: []client.Object{sset1, pod1}, // sset exists with the same UID
 				es:          *withAnnotation(es(), "elasticsearch.k8s.elastic.co/recreate-sset1", sset1JSON),
 			},
 			wantES:          *withAnnotation(es(), "elasticsearch.k8s.elastic.co/recreate-sset1", sset1JSON),
@@ -339,7 +339,7 @@ func Test_recreateStatefulSets(t *testing.T) {
 		{
 			name: "StatefulSet to create",
 			args: args{
-				runtimeObjs: []runtime.Object{pod1}, // sset doesn't exist
+				runtimeObjs: []client.Object{pod1}, // sset doesn't exist
 				es:          *withAnnotation(es(), "elasticsearch.k8s.elastic.co/recreate-sset1", sset1JSON),
 			},
 			wantES: *withAnnotation(es(), "elasticsearch.k8s.elastic.co/recreate-sset1", sset1JSON),
@@ -351,7 +351,7 @@ func Test_recreateStatefulSets(t *testing.T) {
 		{
 			name: "StatefulSet already recreated: remove the annotation",
 			args: args{
-				runtimeObjs: []runtime.Object{sset1DifferentUID, pod1WithOwnerRef}, // sset recreated
+				runtimeObjs: []client.Object{sset1DifferentUID, pod1WithOwnerRef}, // sset recreated
 				es:          *withAnnotation(es(), "elasticsearch.k8s.elastic.co/recreate-sset1", sset1JSON),
 			},
 			wantES:          *es(),                                    // annotation removed
@@ -362,7 +362,7 @@ func Test_recreateStatefulSets(t *testing.T) {
 		{
 			name: "multiple statefulsets to handle",
 			args: args{
-				runtimeObjs: []runtime.Object{sset1, sset2, pod1},
+				runtimeObjs: []client.Object{sset1, sset2, pod1},
 				es: *withAnnotation(withAnnotation(es(),
 					"elasticsearch.k8s.elastic.co/recreate-sset1", sset1JSON),
 					"elasticsearch.k8s.elastic.co/recreate-sset2", sset2JSON),
@@ -377,7 +377,7 @@ func Test_recreateStatefulSets(t *testing.T) {
 		{
 			name: "additional annotations are ignored",
 			args: args{
-				runtimeObjs: []runtime.Object{sset1DifferentUID, pod1}, // sset recreated
+				runtimeObjs: []client.Object{sset1DifferentUID, pod1}, // sset recreated
 				es: *withAnnotation(withAnnotation(es(),
 					"elasticsearch.k8s.elastic.co/recreate-sset1", sset1JSON),
 					"another-annotation-key", sset2JSON),
@@ -392,7 +392,7 @@ func Test_recreateStatefulSets(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			k8sClient := k8s.NewFakeClient(append(tt.args.runtimeObjs, &tt.args.es)...)
-			got, err := recreateStatefulSets(k8sClient, tt.args.es)
+			got, err := recreateStatefulSets(context.Background(), k8sClient, tt.args.es)
 			require.NoError(t, err)
 			require.Equal(t, tt.wantRecreations, got)
 
@@ -491,7 +491,7 @@ func Test_updatePodOwners(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := updatePodOwners(tt.args.k8sClient, tt.args.es, tt.args.statefulSet)
+			err := updatePodOwners(context.Background(), tt.args.k8sClient, tt.args.es, tt.args.statefulSet)
 			require.NoError(t, err)
 
 			var retrievedPods corev1.PodList
@@ -577,7 +577,7 @@ func Test_removeESPodOwner(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := removeESPodOwner(tt.args.k8sClient, tt.args.es, tt.args.statefulSet)
+			err := removeESPodOwner(context.Background(), tt.args.k8sClient, tt.args.es, tt.args.statefulSet)
 			require.NoError(t, err)
 
 			var retrievedPods corev1.PodList

@@ -33,6 +33,7 @@ var (
 	// Due to bugfixes present in 7.14 that ECK depends on, this is the lowest version we support in Fleet mode.
 	SupportedFleetModeAgentVersions = MinMaxVersion{Min: MustParse("7.14.0-SNAPSHOT"), Max: From(8, 99, 99)}
 	SupportedMapsVersions           = MinMaxVersion{Min: From(7, 11, 0), Max: From(8, 99, 99)}
+	SupportedLogstashVersions       = MinMaxVersion{Min: From(8, 6, 0), Max: From(8, 99, 99)}
 
 	// minPreReleaseVersion is the lowest prerelease identifier as numeric prerelease takes precedence before
 	// alphanumeric ones and it can't have leading zeros.
@@ -74,7 +75,7 @@ func Parse(v string) (Version, error) {
 	return semver.Parse(v)
 }
 
-// Parse attempts to parse a version string and panics if it fails.
+// MustParse attempts to parse a version string and panics if it fails.
 func MustParse(v string) Version {
 	return semver.MustParse(v)
 }
@@ -89,6 +90,12 @@ func From(major, minor, patch int) Version {
 // See https://semver.org/#spec-item-11.
 func MinFor(major, minor, patch uint64) Version {
 	return Version{Major: major, Minor: minor, Patch: patch, Pre: []semver.PRVersion{minPreReleaseVersion}}
+}
+
+// WithoutPre removes the PreRelease version for the given version.
+func WithoutPre(v Version) Version {
+	v.Pre = nil
+	return v
 }
 
 // MinInPods returns the lowest version parsed from labels in the given Pods.

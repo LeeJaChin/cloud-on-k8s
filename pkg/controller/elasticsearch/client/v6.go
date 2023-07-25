@@ -11,14 +11,19 @@ import (
 
 	"github.com/pkg/errors"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/stringsutil"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1alpha1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/stringsutil"
 )
 
 var errNotSupportedInEs6x = errors.New("not supported in Elasticsearch 6.x")
 
 type clientV6 struct {
 	baseClient
+}
+
+func (c *clientV6) Version() version.Version {
+	return c.version
 }
 
 func (c *clientV6) GetClusterInfo(ctx context.Context) (Info, error) {
@@ -54,6 +59,16 @@ func (c *clientV6) EnableShardAllocation(ctx context.Context) error {
 
 func (c *clientV6) DisableReplicaShardsAllocation(ctx context.Context) error {
 	return c.updateAllocationEnable(ctx, "primaries")
+}
+
+func (c *clientV6) RemoveTransientAllocationSettings(ctx context.Context) error {
+	allocationSettings := struct {
+		Transient struct {
+			Exclude *string `json:"cluster.routing.allocation.exclude._name"`
+			Enable  *string `json:"cluster.routing.allocation.enable"`
+		} `json:"transient"`
+	}{}
+	return c.put(ctx, "/_cluster/settings", allocationSettings, nil)
 }
 
 func (c *clientV6) SyncedFlush(ctx context.Context) error {
@@ -141,11 +156,11 @@ func (c *clientV6) StartBasic(ctx context.Context) (StartBasicResponse, error) {
 	return response, err
 }
 
-func (c *clientV6) AddVotingConfigExclusions(ctx context.Context, nodeNames []string) error {
+func (c *clientV6) AddVotingConfigExclusions(_ context.Context, _ []string) error {
 	return errNotSupportedInEs6x
 }
 
-func (c *clientV6) DeleteVotingConfigExclusions(ctx context.Context, waitForRemoval bool) error {
+func (c *clientV6) DeleteVotingConfigExclusions(_ context.Context, waitForRemoval bool) error {
 	return errNotSupportedInEs6x
 }
 
@@ -153,7 +168,7 @@ func (c *clientV6) DeleteAutoscalingPolicies(_ context.Context) error {
 	return errNotSupportedInEs6x
 }
 
-func (c *clientV6) CreateAutoscalingPolicy(_ context.Context, _ string, _ esv1.AutoscalingPolicy) error {
+func (c *clientV6) CreateAutoscalingPolicy(_ context.Context, _ string, _ v1alpha1.AutoscalingPolicy) error {
 	return errNotSupportedInEs6x
 }
 
@@ -162,6 +177,18 @@ func (c *clientV6) GetAutoscalingCapacity(_ context.Context) (AutoscalingCapacit
 }
 
 func (c *clientV6) UpdateMLNodesSettings(_ context.Context, _ int32, _ string) error {
+	return errNotSupportedInEs6x
+}
+
+func (c *clientV6) GetShutdown(context.Context, *string) (ShutdownResponse, error) {
+	return ShutdownResponse{}, errNotSupportedInEs6x
+}
+
+func (c *clientV6) PutShutdown(context.Context, string, ShutdownType, string) error {
+	return errNotSupportedInEs6x
+}
+
+func (c *clientV6) DeleteShutdown(context.Context, string) error {
 	return errNotSupportedInEs6x
 }
 
@@ -182,6 +209,10 @@ func (c *clientV6) ClusterBootstrappedForZen2(ctx context.Context) (bool, error)
 	}
 	// should never happen since we ensured a single entry in the above map
 	return false, errors.New("no master found in ClusterBootstrappedForZen2")
+}
+
+func (c *clientV6) GetClusterState(_ context.Context) (ClusterState, error) {
+	return ClusterState{}, errors.New("cluster state is not supported in Elasticsearch 6.x")
 }
 
 func (c *clientV6) Request(ctx context.Context, r *http.Request) (*http.Response, error) {

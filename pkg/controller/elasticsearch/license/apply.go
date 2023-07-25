@@ -14,18 +14,23 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	commonlicense "github.com/elastic/cloud-on-k8s/pkg/controller/common/license"
-	esclient "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
-	ulog "github.com/elastic/cloud-on-k8s/pkg/utils/log"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	commonlicense "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/license"
+	esclient "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/client"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
+	ulog "github.com/elastic/cloud-on-k8s/v2/pkg/utils/log"
 )
-
-var log = ulog.Log.WithName("elasticsearch-controller")
 
 // isTrial returns true if an Elasticsearch license is of the trial type
 func isTrial(l esclient.License) bool {
 	return l.Type == string(esclient.ElasticsearchLicenseTypeTrial)
+}
+
+// isECKManagedTrial returns true if this is a trial started via the internal trial mechanism in the operator. We use an
+// empty license with only the type field populated to indicate to the Elasticsearch controller that a self-generated
+// trial in Elasticsearch should be started. This can be done only once.
+func isECKManagedTrial(l esclient.License) bool {
+	return isTrial(l) && l.Signature == "" && l.UID == "" && l.ExpiryDateInMillis == 0 && l.StartDateInMillis == 0
 }
 
 // isBasic returns true if an Elasticsearch license is of the basic type
@@ -46,7 +51,7 @@ func applyLinkedLicense(
 	// namespace of this cluster following the cluster-license naming
 	// convention
 	var license corev1.Secret
-	err := c.Get(context.Background(),
+	err := c.Get(ctx,
 		types.NamespacedName{
 			Namespace: esCluster.Namespace,
 			Name:      esv1.LicenseSecretName(esCluster.Name),
@@ -69,7 +74,7 @@ func applyLinkedLicense(
 			// - the user manually started a trial at the stack level (eg. by clicking a button in Kibana when
 			// trying to access a commercial feature). While this is not a supported use case,
 			// we tolerate it to avoid a bad user experience because trials can only be started once.
-			log.V(1).Info("Preserving existing stack-level trial license",
+			ulog.FromContext(ctx).V(1).Info("Preserving existing stack-level trial license",
 				"namespace", esCluster.Namespace, "es_name", esCluster.Name)
 			return nil
 		default:
@@ -117,7 +122,8 @@ func updateLicense(
 		},
 	}
 
-	if isTrial(desired) {
+	if isECKManagedTrial(desired) {
+		// start a self-generated trial in Elasticsearch, this can only be done once.
 		return pkgerrors.Wrap(startTrial(ctx, updater, esCluster), "failed to start trial")
 	}
 
@@ -135,6 +141,7 @@ func updateLicense(
 // Elasticsearch API.
 func startTrial(ctx context.Context, c esclient.LicenseClient, esCluster types.NamespacedName) error {
 	response, err := c.StartTrial(ctx)
+	log := ulog.FromContext(ctx)
 	if err != nil && esclient.IsForbidden(err) {
 		log.Info("failed to start trial most likely because trial was activated previously",
 			"err", err.Error(),

@@ -8,21 +8,22 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 func Test_listAffectedLicenses(t *testing.T) {
 	trueVal := true
 
 	type args struct {
-		initialObjects []runtime.Object
+		initialObjects []client.Object
 	}
 	tests := []struct {
 		name          string
@@ -34,7 +35,7 @@ func Test_listAffectedLicenses(t *testing.T) {
 		{
 			name: "happy path",
 			args: args{
-				initialObjects: []runtime.Object{
+				initialObjects: []client.Object{
 					&esv1.Elasticsearch{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      "foo-cluster",
@@ -81,7 +82,7 @@ func Test_listAffectedLicenses(t *testing.T) {
 				client = k8s.NewFailingClient(tt.injectedError)
 			}
 
-			got, err := reconcileRequestsForAllClusters(client)
+			got, err := reconcileRequestsForAllClusters(client, logr.Discard())
 			if (err != nil) != tt.wantErr {
 				t.Errorf("reconcileRequestsForAllClusters() error = %v, wantErr %v", err, tt.wantErr)
 				return

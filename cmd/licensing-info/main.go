@@ -5,18 +5,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 
 	"k8s.io/client-go/kubernetes/scheme"
-	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp" // auth on gke
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
-	controllerscheme "github.com/elastic/cloud-on-k8s/pkg/controller/common/scheme"
-	"github.com/elastic/cloud-on-k8s/pkg/license"
+	controllerscheme "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/scheme"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/license"
 )
 
 // Simple program that returns the licensing information, including the total memory of all Elastic managed components by
@@ -40,7 +40,7 @@ func main() {
 	var operatorNamespace string
 	flag.StringVar(&operatorNamespace, "operator-namespace", "elastic-system", "indicates the namespace where the operator is deployed")
 	flag.Parse()
-	licensingInfo, err := license.NewResourceReporter(newK8sClient(), operatorNamespace).Get()
+	licensingInfo, err := license.NewResourceReporter(newK8sClient(), operatorNamespace, nil).Get(context.Background())
 	if err != nil {
 		log.Fatal(err, "Failed to get licensing info")
 	}

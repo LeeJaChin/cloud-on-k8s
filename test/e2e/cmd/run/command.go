@@ -17,8 +17,8 @@ import (
 	"github.com/spf13/viper"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	logutil "github.com/elastic/cloud-on-k8s/pkg/utils/log"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test"
+	logutil "github.com/elastic/cloud-on-k8s/v2/pkg/utils/log"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
 )
 
 type runFlags struct {
@@ -48,6 +48,7 @@ type runFlags struct {
 	logToFile             bool
 	ignoreWebhookFailures bool
 	deployChaosJob        bool
+	e2eTags               string
 	testEnvTags           []string
 }
 
@@ -81,7 +82,7 @@ func Command() *cobra.Command {
 	cmd.Flags().BoolVar(&flags.autoPortForwarding, "auto-port-forwarding", false, "Enable port forwarding to pods")
 	cmd.Flags().DurationVar(&flags.commandTimeout, "command-timeout", 90*time.Second, "Timeout for commands executed")
 	cmd.Flags().StringVar(&flags.e2eImage, "e2e-image", "", "E2E test image")
-	cmd.Flags().StringVar(&flags.elasticStackVersion, "elastic-stack-version", test.LatestVersion7x, "Elastic Stack version")
+	cmd.Flags().StringVar(&flags.elasticStackVersion, "elastic-stack-version", test.LatestReleasedVersion7x, "Elastic Stack version")
 	cmd.Flags().StringVar(&flags.kubeConfig, "kubeconfig", "", "Path to kubeconfig")
 	cmd.Flags().BoolVar(&flags.local, "local", false, "Create the environment for running tests locally")
 	cmd.Flags().StringSliceVar(&flags.managedNamespaces, "managed-namespaces", []string{"mercury", "venus"}, "List of managed namespaces")
@@ -95,7 +96,7 @@ func Command() *cobra.Command {
 	cmd.Flags().StringVar(&flags.scratchDirRoot, "scratch-dir", "/tmp/eck-e2e", "Path under which temporary files should be created")
 	cmd.Flags().StringVar(&flags.testRegex, "test-regex", "", "Regex to pass to the test runner")
 	cmd.Flags().StringVar(&flags.testRunName, "test-run-name", randomTestRunName(), "Name of this test run")
-	cmd.Flags().DurationVar(&flags.testTimeout, "test-timeout", 30*time.Minute, "Timeout before failing a test")
+	cmd.Flags().DurationVar(&flags.testTimeout, "test-timeout", 15*time.Minute, "Timeout before failing a test")
 	cmd.Flags().StringVar(&flags.pipeline, "pipeline", "", "E2E test pipeline name")
 	cmd.Flags().StringVar(&flags.buildNumber, "build-number", "", "E2E test build number")
 	cmd.Flags().StringVar(&flags.provider, "provider", "", "E2E test infrastructure provider")
@@ -103,6 +104,7 @@ func Command() *cobra.Command {
 	cmd.Flags().BoolVar(&flags.logToFile, "log-to-file", false, "Specifies if should log test output to file. Disabled by default.")
 	cmd.Flags().BoolVar(&flags.ignoreWebhookFailures, "ignore-webhook-failures", false, "Specifies if webhook errors should be ignored. Useful when running test locally. False by default")
 	cmd.Flags().BoolVar(&flags.deployChaosJob, "deploy-chaos-job", false, "Deploy the chaos job")
+	cmd.Flags().StringVar(&flags.e2eTags, "e2e-tags", "e2e", "Go tags to specify a subset of the tests using Go build constraints")
 	cmd.Flags().StringSliceVar(&flags.testEnvTags, "test-env-tags", nil, "Tags describing the environment for this test run")
 	logutil.BindFlags(cmd.PersistentFlags())
 

@@ -11,20 +11,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/certificates"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/label"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/certificates"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/label"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 func TestReconcile(t *testing.T) {
 	type args struct {
 		es          esv1.Elasticsearch
-		secrets     []runtime.Object
+		secrets     []client.Object
 		transportCA certificates.CA
 	}
 	testTransportCA, _ := certificates.NewSelfSignedCA(certificates.CABuilderOptions{})
@@ -38,14 +38,14 @@ func TestReconcile(t *testing.T) {
 			name: "Certificates should be sorted",
 			args: args{
 				es: esv1.Elasticsearch{ObjectMeta: metav1.ObjectMeta{Name: "es1", Namespace: "ns1"}},
-				secrets: []runtime.Object{
+				secrets: []client.Object{
 					&v1.Secret{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      "b",
 							Namespace: "ns1",
 							Labels: map[string]string{
 								label.ClusterNameLabelName: "es1",
-								common.TypeLabelName:       TypeLabelValue,
+								commonv1.TypeLabelName:     TypeLabelValue,
 							},
 						},
 						Data: map[string][]byte{certificates.CAFileName: []byte("cert1\n")},
@@ -56,7 +56,7 @@ func TestReconcile(t *testing.T) {
 							Namespace: "ns1",
 							Labels: map[string]string{
 								label.ClusterNameLabelName: "es1",
-								common.TypeLabelName:       TypeLabelValue,
+								commonv1.TypeLabelName:     TypeLabelValue,
 							},
 						},
 						Data: map[string][]byte{certificates.CAFileName: []byte("cert2\n")},
@@ -70,14 +70,14 @@ func TestReconcile(t *testing.T) {
 			name: "Only include Secrets with the right label",
 			args: args{
 				es: esv1.Elasticsearch{ObjectMeta: metav1.ObjectMeta{Name: "es1", Namespace: "ns1"}},
-				secrets: []runtime.Object{
+				secrets: []client.Object{
 					&v1.Secret{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      "b",
 							Namespace: "ns1",
 							Labels: map[string]string{
 								label.ClusterNameLabelName: "es1",
-								common.TypeLabelName:       TypeLabelValue,
+								commonv1.TypeLabelName:     TypeLabelValue,
 							},
 						},
 						Data: map[string][]byte{certificates.CAFileName: []byte("cert1\n")},
@@ -88,7 +88,7 @@ func TestReconcile(t *testing.T) {
 							Namespace: "ns1",
 							Labels: map[string]string{
 								label.ClusterNameLabelName: "es1",
-								common.TypeLabelName:       "foo",
+								commonv1.TypeLabelName:     "foo",
 							},
 						},
 						Data: map[string][]byte{certificates.CAFileName: []byte("cert3\n")},
@@ -99,7 +99,7 @@ func TestReconcile(t *testing.T) {
 							Namespace: "ns1",
 							Labels: map[string]string{
 								label.ClusterNameLabelName: "es1",
-								common.TypeLabelName:       TypeLabelValue,
+								commonv1.TypeLabelName:     TypeLabelValue,
 							},
 						},
 						Data: map[string][]byte{certificates.CAFileName: []byte("cert2\n")},
@@ -122,7 +122,7 @@ func TestReconcile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			k8sClient := k8s.NewFakeClient(tt.args.secrets...)
-			if err := Reconcile(k8sClient, tt.args.es, tt.args.transportCA); (err != nil) != tt.wantErr {
+			if err := Reconcile(context.Background(), k8sClient, tt.args.es, tt.args.transportCA); (err != nil) != tt.wantErr {
 				t.Errorf("Reconcile() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			remoteCaList := v1.Secret{}

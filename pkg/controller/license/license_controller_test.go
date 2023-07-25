@@ -15,14 +15,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	commonlicense "github.com/elastic/cloud-on-k8s/pkg/controller/common/license"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/chrono"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	commonlicense "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/license"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/client"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/chrono"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 func Test_nextReconcileRelativeTo(t *testing.T) {
@@ -92,6 +92,7 @@ func enterpriseLicense(t *testing.T, licenseType client.ElasticsearchLicenseType
 		License: commonlicense.LicenseSpec{
 			ExpiryDateInMillis: expiry.Unix() * 1000,
 			StartDateInMillis:  time.Now().Add(-1*time.Minute).Unix() * 1000,
+			Type:               "enterprise",
 			ClusterLicenses: []commonlicense.ElasticsearchLicense{
 				{
 					License: client.License{
@@ -119,58 +120,70 @@ func enterpriseLicense(t *testing.T, licenseType client.ElasticsearchLicenseType
 
 func TestReconcileLicenses_reconcileInternal(t *testing.T) {
 	tests := []struct {
-		name             string
-		cluster          *esv1.Elasticsearch
-		k8sResources     []runtime.Object
-		wantErr          string
-		wantNewLicense   bool
-		wantRequeue      bool
-		wantRequeueAfter bool
+		name               string
+		cluster            *esv1.Elasticsearch
+		k8sResources       []crclient.Object
+		wantErr            string
+		wantClusterLicense bool
+		wantRequeue        bool
+		wantRequeueAfter   bool
 	}{
 		{
-			name:             "no existing license: nothing to do",
-			cluster:          cluster,
-			k8sResources:     []runtime.Object{cluster},
-			wantErr:          "",
-			wantNewLicense:   false,
-			wantRequeue:      false,
-			wantRequeueAfter: false,
+			name:               "no existing license: nothing to do",
+			cluster:            cluster,
+			k8sResources:       []crclient.Object{cluster},
+			wantErr:            "",
+			wantClusterLicense: false,
+			wantRequeue:        false,
+			wantRequeueAfter:   false,
+		},
+		{
+			name:    "no existing license but cluster license exists: delete cluster license",
+			cluster: cluster,
+			k8sResources: []crclient.Object{cluster, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+				Name:      esv1.LicenseSecretName("cluster"),
+				Namespace: "namespace",
+			}}},
+			wantErr:            "",
+			wantClusterLicense: false,
+			wantRequeue:        false,
+			wantRequeueAfter:   false,
 		},
 		{
 			name:    "existing gold matching license",
 			cluster: cluster,
-			k8sResources: []runtime.Object{
+			k8sResources: []crclient.Object{
 				enterpriseLicense(t, client.ElasticsearchLicenseTypeGold, 1, false),
 				cluster,
 			},
-			wantErr:          "",
-			wantNewLicense:   true,
-			wantRequeue:      false,
-			wantRequeueAfter: true,
+			wantErr:            "",
+			wantClusterLicense: true,
+			wantRequeue:        false,
+			wantRequeueAfter:   true,
 		},
 		{
 			name:    "existing platinum matching license",
 			cluster: cluster,
-			k8sResources: []runtime.Object{
+			k8sResources: []crclient.Object{
 				enterpriseLicense(t, client.ElasticsearchLicenseTypePlatinum, 1, false),
 				cluster,
 			},
-			wantErr:          "",
-			wantNewLicense:   true,
-			wantRequeue:      false,
-			wantRequeueAfter: true,
+			wantErr:            "",
+			wantClusterLicense: true,
+			wantRequeue:        false,
+			wantRequeueAfter:   true,
 		},
 		{
 			name:    "existing license expired",
 			cluster: cluster,
-			k8sResources: []runtime.Object{
+			k8sResources: []crclient.Object{
 				enterpriseLicense(t, client.ElasticsearchLicenseTypePlatinum, 1, true),
 				cluster,
 			},
-			wantErr:          "",
-			wantNewLicense:   false,
-			wantRequeue:      false,
-			wantRequeueAfter: false,
+			wantErr:            "",
+			wantClusterLicense: false,
+			wantRequeue:        false,
+			wantRequeueAfter:   false,
 		},
 	}
 	for _, tt := range tests {
@@ -181,7 +194,7 @@ func TestReconcileLicenses_reconcileInternal(t *testing.T) {
 				checker: commonlicense.MockLicenseChecker{EnterpriseEnabled: true},
 			}
 			nsn := k8s.ExtractNamespacedName(tt.cluster)
-			res, err := r.reconcileInternal(reconcile.Request{NamespacedName: nsn}).Aggregate()
+			res, err := r.reconcileInternal(context.Background(), reconcile.Request{NamespacedName: nsn}).Aggregate()
 			if tt.wantErr != "" {
 				require.EqualError(t, err, tt.wantErr)
 				return
@@ -201,7 +214,7 @@ func TestReconcileLicenses_reconcileInternal(t *testing.T) {
 			licenseNsn.Name = esv1.LicenseSecretName(licenseNsn.Name)
 			var license corev1.Secret
 			err = client.Get(context.Background(), licenseNsn, &license)
-			if !tt.wantNewLicense {
+			if !tt.wantClusterLicense {
 				require.True(t, apierrors.IsNotFound(err))
 			} else {
 				require.NoError(t, err)

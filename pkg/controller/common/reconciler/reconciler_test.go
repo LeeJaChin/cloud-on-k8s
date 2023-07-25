@@ -19,13 +19,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/comparison"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/comparison"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 func withoutControllerRef(obj runtime.Object) runtime.Object {
 	copied := obj.DeepCopyObject()
-	copied.(metav1.Object).SetOwnerReferences(nil)
+	copied.(metav1.Object).SetOwnerReferences(nil) //nolint:forcetypeassert
 	return copied
 }
 
@@ -50,7 +50,7 @@ func TestReconcileResource(t *testing.T) {
 	tests := []struct {
 		name                 string
 		args                 func() args
-		initialObjects       []runtime.Object
+		initialObjects       []client.Object
 		argAssertion         func(args args)
 		exptectedErrorMsg    string
 		serverStateAssertion func(serverState corev1.Secret)
@@ -134,7 +134,7 @@ func TestReconcileResource(t *testing.T) {
 					},
 				}
 			},
-			initialObjects: []runtime.Object{&corev1.Secret{
+			initialObjects: []client.Object{&corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      objectKey.Name,
 					Namespace: objectKey.Namespace,
@@ -144,7 +144,7 @@ func TestReconcileResource(t *testing.T) {
 				},
 			}},
 			argAssertion: func(args args) {
-				assert.Equal(t, "baz", args.Reconciled.(*corev1.Secret).Labels["label"])
+				assert.Equal(t, "baz", args.Reconciled.(*corev1.Secret).Labels["label"]) //nolint:forcetypeassert
 			},
 		},
 		{
@@ -168,10 +168,10 @@ func TestReconcileResource(t *testing.T) {
 					},
 				}
 			},
-			initialObjects: []runtime.Object{obj},
+			initialObjects: []client.Object{obj},
 			argAssertion: func(args args) {
 				// should be unchanged
-				assert.Equal(t, "be quiet", string(args.Expected.(*corev1.Secret).Data["bar"]))
+				assert.Equal(t, "be quiet", string(args.Expected.(*corev1.Secret).Data["bar"])) //nolint:forcetypeassert
 			},
 			serverStateAssertion: func(serverState corev1.Secret) {
 				assert.Equal(t, "be quiet", string(serverState.Data["bar"]))
@@ -200,7 +200,7 @@ func TestReconcileResource(t *testing.T) {
 					UpdateReconciled: noopModifier,
 				}
 			},
-			initialObjects: []runtime.Object{
+			initialObjects: []client.Object{
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      objectKey.Name,
@@ -214,7 +214,7 @@ func TestReconcileResource(t *testing.T) {
 			},
 			argAssertion: func(args args) {
 				// should be updated to the server state
-				assert.Equal(t, "other", args.Reconciled.(*corev1.Secret).Labels["label"])
+				assert.Equal(t, "other", args.Reconciled.(*corev1.Secret).Labels["label"]) //nolint:forcetypeassert
 			},
 			serverStateAssertion: func(serverState corev1.Secret) {
 				// should be unchanged as it is ignored by the custom differ
@@ -240,7 +240,7 @@ func TestReconcileResource(t *testing.T) {
 					UpdateReconciled: noopModifier,
 				}
 			},
-			initialObjects: []runtime.Object{
+			initialObjects: []client.Object{
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace:       objectKey.Namespace,
@@ -265,6 +265,7 @@ func TestReconcileResource(t *testing.T) {
 			args := tt.args()
 			p := Params{
 				Client:           client,
+				Context:          context.Background(),
 				Owner:            args.Owner,
 				Expected:         args.Expected,
 				Reconciled:       args.Reconciled,

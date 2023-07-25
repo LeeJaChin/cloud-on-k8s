@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -26,22 +27,24 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	agentv1alpha1 "github.com/elastic/cloud-on-k8s/pkg/apis/agent/v1alpha1"
-	apmv1 "github.com/elastic/cloud-on-k8s/pkg/apis/apm/v1"
-	beatv1beta1 "github.com/elastic/cloud-on-k8s/pkg/apis/beat/v1beta1"
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	entv1 "github.com/elastic/cloud-on-k8s/pkg/apis/enterprisesearch/v1"
-	kbv1 "github.com/elastic/cloud-on-k8s/pkg/apis/kibana/v1"
-	beatcommon "github.com/elastic/cloud-on-k8s/pkg/controller/beat/common"
-	"github.com/elastic/cloud-on-k8s/test/e2e/cmd/run"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/agent"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/apmserver"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/beat"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/elasticsearch"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/enterprisesearch"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test/kibana"
+	agentv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/agent/v1alpha1"
+	apmv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/apm/v1"
+	beatv1beta1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/beat/v1beta1"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	entv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/enterprisesearch/v1"
+	kbv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/kibana/v1"
+	logstashv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/logstash/v1alpha1"
+	beatcommon "github.com/elastic/cloud-on-k8s/v2/pkg/controller/beat/common"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/cmd/run"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/agent"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/apmserver"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/beat"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/elasticsearch"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/enterprisesearch"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/kibana"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test/logstash"
 )
 
 type BuilderTransform func(test.Builder) test.Builder
@@ -59,11 +62,12 @@ func NewYAMLDecoder() *YAMLDecoder {
 	scheme.AddKnownTypes(beatv1beta1.GroupVersion, &beatv1beta1.Beat{}, &beatv1beta1.BeatList{})
 	scheme.AddKnownTypes(entv1.GroupVersion, &entv1.EnterpriseSearch{}, &entv1.EnterpriseSearchList{})
 	scheme.AddKnownTypes(agentv1alpha1.GroupVersion, &agentv1alpha1.Agent{}, &agentv1alpha1.AgentList{})
-
+	scheme.AddKnownTypes(logstashv1alpha1.GroupVersion, &logstashv1alpha1.Logstash{}, &logstashv1alpha1.LogstashList{})
 	scheme.AddKnownTypes(rbacv1.SchemeGroupVersion, &rbacv1.ClusterRoleBinding{}, &rbacv1.ClusterRoleBindingList{})
 	scheme.AddKnownTypes(rbacv1.SchemeGroupVersion, &rbacv1.ClusterRole{}, &rbacv1.ClusterRoleList{})
 	scheme.AddKnownTypes(corev1.SchemeGroupVersion, &corev1.ServiceAccount{}, &corev1.ServiceAccountList{})
 	scheme.AddKnownTypes(corev1.SchemeGroupVersion, &corev1.Service{}, &corev1.ServiceList{})
+	scheme.AddKnownTypes(appsv1.SchemeGroupVersion, &appsv1.DaemonSet{})
 	decoder := serializer.NewCodecFactory(scheme).UniversalDeserializer()
 
 	return &YAMLDecoder{decoder: decoder}
@@ -108,6 +112,10 @@ func (yd *YAMLDecoder) ToBuilders(reader *bufio.Reader, transform BuilderTransfo
 			b := enterprisesearch.NewBuilderWithoutSuffix(decodedObj.Name)
 			b.EnterpriseSearch = *decodedObj
 			builder = transform(b)
+		case *logstashv1alpha1.Logstash:
+			b := logstash.NewBuilderWithoutSuffix(decodedObj.Name)
+			b.Logstash = *decodedObj
+			builder = transform(b)
 		default:
 			return builders, fmt.Errorf("unexpected object type: %t", decodedObj)
 		}
@@ -144,6 +152,7 @@ func (yd *YAMLDecoder) ToObjects(reader *bufio.Reader) ([]runtime.Object, error)
 // RunFile runs the builder workflow for all known resources in a yaml file, all other objects are created before and deleted
 // after. Resources will be created in a given namespace and with a given suffix. Additional objects to be created and deleted
 // can be passed as well as set of optional transformations to apply to all Builders.
+//
 //nolint:thelper
 func RunFile(
 	t *testing.T,
@@ -239,11 +248,19 @@ func transformToE2E(namespace, fullTestName, suffix string, transformers []Build
 		case *esv1.Elasticsearch:
 			b := elasticsearch.NewBuilderWithoutSuffix(decodedObj.Name)
 			b.Elasticsearch = *decodedObj
-			builder = b.WithNamespace(namespace).
+			b = b.WithNamespace(namespace).
 				WithSuffix(suffix).
 				WithRestrictedSecurityContext().
 				WithLabel(run.TestNameLabel, fullTestName).
 				WithPodLabel(run.TestNameLabel, fullTestName)
+
+			// for EKS, we set our e2e storage class to use local volumes instead of depending on the default storage class that uses
+			// network storage because from k8s 1.23 network storage requires the installation of the Amazon EBS CSI driver and the
+			// deployer does not yet support this. See https://github.com/elastic/cloud-on-k8s/issues/6515.
+			if strings.HasPrefix(test.Ctx().Provider, "eks") {
+				b = b.WithDefaultPersistentVolumes()
+			}
+			builder = b
 		case *kbv1.Kibana:
 			b := kibana.NewBuilderWithoutSuffix(decodedObj.Name)
 			b.Kibana = *decodedObj
@@ -304,6 +321,24 @@ func transformToE2E(namespace, fullTestName, suffix string, transformers []Build
 			}
 
 			builder = b
+		case *logstashv1alpha1.Logstash:
+			b := logstash.NewBuilderWithoutSuffix(decodedObj.Name)
+
+			esRefs := make([]logstashv1alpha1.ElasticsearchCluster, 0, len(b.Logstash.Spec.ElasticsearchRefs))
+			for _, ref := range b.Logstash.Spec.ElasticsearchRefs {
+				esRefs = append(esRefs, logstashv1alpha1.ElasticsearchCluster{
+					ObjectSelector: tweakServiceRef(ref.ObjectSelector, suffix),
+					ClusterName:    ref.ClusterName,
+				})
+			}
+
+			b = b.WithNamespace(namespace).
+				WithSuffix(suffix).
+				WithElasticsearchRefs(esRefs...).
+				WithLabel(run.TestNameLabel, fullTestName).
+				WithPodLabel(run.TestNameLabel, fullTestName)
+
+			builder = b
 		case *corev1.ServiceAccount:
 			decodedObj.Namespace = namespace
 			decodedObj.Name = decodedObj.Name + "-" + suffix
@@ -317,11 +352,19 @@ func transformToE2E(namespace, fullTestName, suffix string, transformers []Build
 		case *corev1.Service:
 			decodedObj.Namespace = namespace
 			decodedObj.Name = decodedObj.Name + "-" + suffix
+		case *appsv1.DaemonSet:
+			decodedObj.Namespace = namespace
+			decodedObj.Name = decodedObj.Name + "-" + suffix
 		}
 
 		if builder != nil {
 			// ECK driven resources can be further transformed
 			for _, transformer := range transformers {
+				// This check is required as transformers is a variadic
+				// argument to "RunFile" (not a slice) and sending nil will panic here.
+				if transformer == nil {
+					continue
+				}
 				builder = transformer(builder)
 			}
 			builders = append(builders, builder)
@@ -391,30 +434,31 @@ func tweakConfigLiterals(config *commonv1.Config, suffix string, namespace strin
 
 	data := config.Data
 
-	elasticsearchHostKey := "xpack.fleet.agents.elasticsearch.host"
-	if val1, ok := data[elasticsearchHostKey]; ok {
-		if val2, ok := val1.(string); ok {
-			val2 = strings.ReplaceAll(
-				val2,
-				"elasticsearch-es-http.default",
-				fmt.Sprintf("elasticsearch-%s-es-http.%s", suffix, namespace),
-			)
-			data[elasticsearchHostKey] = val2
+	elasticsearchHostsKey := "xpack.fleet.agents.elasticsearch.hosts"
+	if untypedHosts, ok := data[elasticsearchHostsKey]; ok {
+		if untypedHostsSlice, ok := untypedHosts.([]interface{}); ok {
+			for i, untypedHost := range untypedHostsSlice {
+				if host, ok := untypedHost.(string); ok {
+					untypedHostsSlice[i] = strings.ReplaceAll(
+						host,
+						"elasticsearch-es-http.default",
+						fmt.Sprintf("elasticsearch-%s-es-http.%s", suffix, namespace),
+					)
+				}
+			}
 		}
 	}
 
 	fleetServerHostsKey := "xpack.fleet.agents.fleet_server.hosts"
-	//nolint:nestif
-	if val1, ok := data[fleetServerHostsKey]; ok {
-		if val2, ok := val1.([]interface{}); ok {
-			if len(val2) > 0 {
-				if val3, ok := val2[0].(string); ok {
-					val3 = strings.ReplaceAll(
-						val3,
+	if untypedHosts, ok := data[fleetServerHostsKey]; ok {
+		if untypedHostsSlice, ok := untypedHosts.([]interface{}); ok {
+			for i, untypedHost := range untypedHostsSlice {
+				if host, ok := untypedHost.(string); ok {
+					untypedHostsSlice[i] = strings.ReplaceAll(
+						host,
 						"fleet-server-agent-http.default",
 						fmt.Sprintf("fleet-server-%s-agent-http.%s", suffix, namespace),
 					)
-					data[fleetServerHostsKey] = []interface{}{val3}
 				}
 			}
 		}

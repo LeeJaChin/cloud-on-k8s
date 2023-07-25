@@ -5,17 +5,19 @@
 package stackmon
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/defaults"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/stackmon/monitoring"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/defaults"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/stackmon/monitoring"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 func TestWithMonitoring(t *testing.T) {
@@ -90,8 +92,8 @@ func TestWithMonitoring(t *testing.T) {
 			},
 			containersLength:       2,
 			esEnvVarsLength:        0,
-			podVolumesLength:       3,
-			beatVolumeMountsLength: 3,
+			podVolumesLength:       4,
+			beatVolumeMountsLength: 4,
 		},
 		{
 			name: "with logs monitoring",
@@ -103,8 +105,8 @@ func TestWithMonitoring(t *testing.T) {
 			},
 			containersLength:       2,
 			esEnvVarsLength:        1,
-			podVolumesLength:       2,
-			beatVolumeMountsLength: 3,
+			podVolumesLength:       3,
+			beatVolumeMountsLength: 4,
 		},
 		{
 			name: "with metrics and logs monitoring",
@@ -117,8 +119,8 @@ func TestWithMonitoring(t *testing.T) {
 			},
 			containersLength:       3,
 			esEnvVarsLength:        1,
-			podVolumesLength:       4,
-			beatVolumeMountsLength: 3,
+			podVolumesLength:       6,
+			beatVolumeMountsLength: 4,
 		},
 		{
 			name: "with metrics and logs monitoring with different es ref",
@@ -131,8 +133,8 @@ func TestWithMonitoring(t *testing.T) {
 			},
 			containersLength:       3,
 			esEnvVarsLength:        1,
-			podVolumesLength:       5,
-			beatVolumeMountsLength: 3,
+			podVolumesLength:       7,
+			beatVolumeMountsLength: 4,
 		},
 	}
 
@@ -140,7 +142,7 @@ func TestWithMonitoring(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			es := tc.es()
 			builder := defaults.NewPodTemplateBuilder(corev1.PodTemplateSpec{}, esv1.ElasticsearchContainerName)
-			_, err := WithMonitoring(fakeClient, builder, es)
+			_, err := WithMonitoring(context.Background(), fakeClient, builder, es)
 			assert.NoError(t, err)
 
 			assert.Equal(t, tc.containersLength, len(builder.PodTemplate.Spec.Containers))
@@ -151,6 +153,7 @@ func TestWithMonitoring(t *testing.T) {
 				for _, c := range builder.PodTemplate.Spec.Containers {
 					if c.Name == "metricbeat" {
 						assert.Equal(t, tc.beatVolumeMountsLength, len(c.VolumeMounts))
+						assertSecurityContext(t, c.SecurityContext)
 					}
 				}
 			}
@@ -158,9 +161,27 @@ func TestWithMonitoring(t *testing.T) {
 				for _, c := range builder.PodTemplate.Spec.Containers {
 					if c.Name == "filebeat" {
 						assert.Equal(t, tc.beatVolumeMountsLength, len(c.VolumeMounts))
+						assertSecurityContext(t, c.SecurityContext)
 					}
 				}
 			}
 		})
 	}
+}
+
+func assertSecurityContext(t *testing.T, securityContext *corev1.SecurityContext) {
+	t.Helper()
+	require.NotNil(t, securityContext)
+	require.NotNil(t, securityContext.Privileged)
+	require.False(t, *securityContext.Privileged)
+	require.NotNil(t, securityContext.Capabilities)
+	droppedCapabilities := securityContext.Capabilities.Drop
+	hasDropAllCapability := false
+	for _, capability := range droppedCapabilities {
+		if capability == "ALL" {
+			hasDropAllCapability = true
+			break
+		}
+	}
+	require.True(t, hasDropAllCapability, "ALL capability not found in securityContext.Capabilities.Drop")
 }

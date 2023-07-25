@@ -17,12 +17,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/license"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/stringsutil"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test"
+	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/license"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/client"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/stringsutil"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
 )
 
 type LicenseTestContext struct {
@@ -84,13 +84,13 @@ func (ltctx *LicenseTestContext) CreateEnterpriseLicenseSecret(secretName string
 	}
 }
 
-func (ltctx *LicenseTestContext) CreateTrialExtension(secretName string, privateKey *rsa.PrivateKey) test.Step {
+func (ltctx *LicenseTestContext) CreateTrialExtension(secretName string, privateKey *rsa.PrivateKey, esLicenseType client.ElasticsearchLicenseType) test.Step {
 	//nolint:thelper
 	return test.Step{
 		Name: "Creating a trial extension secret",
 		Test: func(t *testing.T) {
 			signer := license.NewSigner(privateKey)
-			clusterLicense, err := GenerateTestLicense(signer)
+			clusterLicense, err := GenerateTestLicense(signer, esLicenseType)
 			require.NoError(t, err)
 			trialExtension := license.EnterpriseLicense{
 				License: license.LicenseSpec{
@@ -130,7 +130,7 @@ func (ltctx *LicenseTestContext) CreateEnterpriseTrialLicenseSecret(secretName s
 					Name:      secretName,
 					Labels: map[string]string{
 						license.LicenseLabelType: string(license.LicenseTypeEnterpriseTrial),
-						common.TypeLabelName:     license.Type,
+						commonv1.TypeLabelName:   license.Type,
 					},
 					Annotations: map[string]string{
 						license.EULAAnnotation: license.EULAAcceptedValue,

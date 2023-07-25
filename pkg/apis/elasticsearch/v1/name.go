@@ -12,13 +12,15 @@ import (
 	apimachineryvalidation "k8s.io/apimachinery/pkg/api/validation"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 
-	common_name "github.com/elastic/cloud-on-k8s/pkg/controller/common/name"
+	common_name "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/name"
 )
 
 const (
 	configSecretSuffix                           = "config"
 	secureSettingsSecretSuffix                   = "secure-settings"
+	fileSettingsSecretSuffix                     = "file-settings"
 	httpServiceSuffix                            = "http"
+	internalHTTPServiceSuffix                    = "internal-http"
 	transportServiceSuffix                       = "transport"
 	elasticUserSecretSuffix                      = "elastic-user"
 	internalUsersSecretSuffix                    = "internal-users"
@@ -128,6 +130,10 @@ func TransportService(esName string) string {
 	return ESNamer.Suffix(esName, transportServiceSuffix)
 }
 
+func InternalHTTPService(esName string) string {
+	return ESNamer.Suffix(esName, internalHTTPServiceSuffix)
+}
+
 func HTTPService(esName string) string {
 	return ESNamer.Suffix(esName, httpServiceSuffix)
 }
@@ -163,4 +169,8 @@ func DefaultPodDisruptionBudget(esName string) string {
 
 func RemoteCaSecretName(esName string) string {
 	return ESNamer.Suffix(esName, remoteCaNameSuffix)
+}
+
+func FileSettingsSecretName(esName string) string {
+	return ESNamer.Suffix(esName, fileSettingsSecretSuffix)
 }

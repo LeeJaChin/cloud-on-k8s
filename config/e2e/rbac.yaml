@@ -73,6 +73,13 @@ rules:
       - "pods/exec"
     verbs:
       - "create"
+  # to allow eck-diagnostics to get pod logs
+  - apiGroups:
+      - ""
+    resources:
+      - "pods/log"
+    verbs:
+      - "get"
   - apiGroups:
       - ""
     resources:
@@ -95,6 +102,7 @@ rules:
       - list
       - watch
       - delete
+      - deletecollection
       - create
       - update
   - apiGroups:
@@ -145,6 +153,7 @@ rules:
       - watch
       - update
       - delete
+      - create
     # to create resources defined in recipes
   - apiGroups:
     - "extensions"
@@ -192,11 +201,12 @@ rules:
       - update
       - patch
       - delete
+      - deletecollection
   - apiGroups:
-      - kibana.k8s.elastic.co
+      - autoscaling.k8s.elastic.co
     resources:
-      - kibanas
-      - kibanas/status
+      - elasticsearchautoscalers
+      - elasticsearchautoscalers/status
     verbs:
       - get
       - list
@@ -205,6 +215,7 @@ rules:
       - update
       - patch
       - delete
+      - deletecollection
   - apiGroups:
       - apm.k8s.elastic.co
     resources:
@@ -218,6 +229,35 @@ rules:
       - update
       - patch
       - delete
+      - deletecollection
+  - apiGroups:
+      - kibana.k8s.elastic.co
+    resources:
+      - kibanas
+      - kibanas/status
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+      - deletecollection
+  - apiGroups:
+      - apm.k8s.elastic.co
+    resources:
+      - apmservers
+      - apmservers/status
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+      - deletecollection
   - apiGroups:
       - enterprisesearch.k8s.elastic.co
     resources:
@@ -231,6 +271,7 @@ rules:
       - update
       - patch
       - delete
+      - deletecollection
   - apiGroups:
       - beat.k8s.elastic.co
     resources:
@@ -244,6 +285,7 @@ rules:
       - update
       - patch
       - delete
+      - deletecollection
   - apiGroups:
       - agent.k8s.elastic.co
     resources:
@@ -257,6 +299,7 @@ rules:
       - update
       - patch
       - delete
+      - deletecollection
   - apiGroups:
       - maps.k8s.elastic.co
     resources:
@@ -270,6 +313,35 @@ rules:
       - update
       - patch
       - delete
+      - deletecollection
+  - apiGroups:
+      - stackconfigpolicy.k8s.elastic.co
+    resources:
+      - stackconfigpolicies
+      - stackconfigpolicies/status
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+      - deletecollection
+  - apiGroups :
+      - logstash.k8s.elastic.co
+    resources:
+      - logstashes
+      - logstashes/status
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+      - deletecollection
   - apiGroups:
       - storage.k8s.io
     resources:

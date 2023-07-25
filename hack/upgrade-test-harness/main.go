@@ -11,12 +11,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/elastic/cloud-on-k8s/hack/upgrade-test-harness/config"
-	"github.com/elastic/cloud-on-k8s/hack/upgrade-test-harness/fixture"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
-	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
+
+	"github.com/elastic/cloud-on-k8s/v2/hack/upgrade-test-harness/config"
+	"github.com/elastic/cloud-on-k8s/v2/hack/upgrade-test-harness/fixture"
 )
 
 type configOpts struct {
@@ -49,13 +49,13 @@ func main() {
 	}
 
 	cmd.Flags().StringVar(&opts.confFile, "conf-file", "conf.yaml", "Path to the file containing test params")
-	cmd.Flags().StringVar(&opts.fromRelease, "from-release", "alpha", "Release to start with (alpha, beta, v101, v112, upcoming)")
+	cmd.Flags().StringVar(&opts.fromRelease, "from-release", "v170", "Release to start with (a directory with this value must exist in testdata/)")
 	cmd.Flags().StringVar(&opts.logLevel, "log-level", "INFO", "Log level (DEBUG, INFO, WARN, ERROR)")
 	cmd.Flags().UintVar(&opts.retryCount, "retry-count", 60, "Number of retries")
 	cmd.Flags().DurationVar(&opts.retryDelay, "retry-delay", 5*time.Second, "Delay between retries")
-	cmd.Flags().DurationVar(&opts.retryTimeout, "retry-timeout", 300*time.Second, "Time limit for retries")
+	cmd.Flags().DurationVar(&opts.retryTimeout, "retry-timeout", 15*time.Minute, "Time limit for retries")
 	cmd.Flags().BoolVar(&opts.skipCleanup, "skip-cleanup", false, "Skip cleaning up after test run")
-	cmd.Flags().StringVar(&opts.toRelease, "to-release", "upcoming", "Release to finish with (alpha, beta, v101, v112, upcoming)")
+	cmd.Flags().StringVar(&opts.toRelease, "to-release", "upcoming", "Release to finish with (a directory with this value must exist in testdata/)")
 	cmd.Flags().StringVar(&opts.upcomingReleaseCRDs, "upcoming-release-crds", "../../config/crds.yaml", "YAML file for installing the CRDs for the upcoming release")
 	cmd.Flags().StringVar(&opts.upcomingReleaseOperator, "upcoming-release-operator", "../../config/operator.yaml", "YAML file for installing the operator for the upcoming release")
 
@@ -175,23 +175,15 @@ func setupUpcomingRelease(installYAML, targetYAML string) error {
 }
 
 func buildUpgradeFixtures(from *fixture.TestParam, to fixture.TestParam) ([]*fixture.Fixture, error) {
-	fixtures := []*fixture.Fixture{fixture.TestInstallOperator(to)}
+	isUpgrade := from != nil
+	fixtures := []*fixture.Fixture{fixture.TestInstallOperator(to, isUpgrade)}
 
-	if from != nil {
+	if isUpgrade {
 		testStatusOfResources, err := fixture.TestStatusOfResources(*from)
 		if err != nil {
 			return nil, err
 		}
 		fixtures = append(fixtures, testStatusOfResources)
-
-		// upgrade from alpha requires deleting the finalizers
-		if from.Name == "alpha" {
-			fixtures = append(fixtures, fixture.TestRemoveFinalizers(*from))
-			// delete the stack as alpha resources are no longer reconciled by later versions of the operator
-			fixtures = append(fixtures, fixture.TestRemoveResources(*from))
-			// ensure that all the services have been removed
-			fixtures = append(fixtures, fixture.ServicesShouldBeRemoved(*from))
-		}
 	}
 
 	testStatusOfResources, err := fixture.TestStatusOfResources(to)

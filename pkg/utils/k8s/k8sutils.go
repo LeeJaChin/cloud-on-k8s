@@ -17,7 +17,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	netutil "github.com/elastic/cloud-on-k8s/pkg/utils/net"
+	netutil "github.com/elastic/cloud-on-k8s/v2/pkg/utils/net"
 )
 
 // DeepCopyObject creates a deep copy of a client.Object.
@@ -28,7 +28,7 @@ func DeepCopyObject(obj client.Object) client.Object {
 	}
 
 	if newObj := obj.DeepCopyObject(); newObj != nil {
-		return newObj.(client.Object)
+		return newObj.(client.Object) //nolint:forcetypeassert
 	}
 
 	return nil
@@ -63,7 +63,7 @@ func ObjectExists(c Client, ref types.NamespacedName, typedReceiver client.Objec
 	return true, nil
 }
 
-// IsAvailable checks if both conditions ContainersReady and PodReady of a Pod are true.
+// IsPodReady checks if both conditions ContainersReady and PodReady of a Pod are true.
 func IsPodReady(pod corev1.Pod) bool {
 	conditionsTrue := 0
 	for _, cond := range pod.Status.Conditions {
@@ -72,6 +72,18 @@ func IsPodReady(pod corev1.Pod) bool {
 		}
 	}
 	return conditionsTrue == 2
+}
+
+// TerminatingPods filters pods for Pods that are in the process of (graceful) termination.
+func TerminatingPods(pods []corev1.Pod) []corev1.Pod {
+	var terminating []corev1.Pod //nolint:prealloc
+	for _, p := range pods {
+		if p.DeletionTimestamp.IsZero() {
+			continue
+		}
+		terminating = append(terminating, p)
+	}
+	return terminating
 }
 
 // PodsByName returns a map of pod names to pods
@@ -131,8 +143,8 @@ func GetServiceIPAddresses(svc corev1.Service) []net.IP {
 	return ipAddrs
 }
 
-// EmitErrorEvent emits an event if the error is report-worthy
-func EmitErrorEvent(r record.EventRecorder, err error, obj runtime.Object, reason, message string, args ...interface{}) {
+// MaybeEmitErrorEvent emits an event if the error is report-worthy
+func MaybeEmitErrorEvent(r record.EventRecorder, err error, obj runtime.Object, reason, message string, args ...interface{}) {
 	// ignore nil errors and conflict issues
 	if err == nil || apierrors.IsConflict(err) {
 		return
@@ -153,19 +165,49 @@ func GetSecretEntry(secret corev1.Secret, key string) []byte {
 	return content
 }
 
+// GetSecretEntriesCount returns the number of matching keys found in secret.
+func GetSecretEntriesCount(secret corev1.Secret, keys ...string) int {
+	if secret.Data == nil {
+		return 0
+	}
+	var hits int
+	for _, k := range keys {
+		if _, exists := secret.Data[k]; exists {
+			hits++
+		}
+	}
+	return hits
+}
+
 // DeleteSecretMatching deletes the Secret matching the provided selectors.
-func DeleteSecretMatching(c Client, opts ...client.ListOption) error {
+func DeleteSecretMatching(ctx context.Context, c Client, opts ...client.ListOption) error {
 	var secrets corev1.SecretList
-	if err := c.List(context.Background(), &secrets, opts...); err != nil {
+	if err := c.List(ctx, &secrets, opts...); err != nil {
 		return err
 	}
 	for _, s := range secrets.Items {
 		secret := s
-		if err := c.Delete(context.Background(), &secret); err != nil && !apierrors.IsNotFound(err) {
+		if err := c.Delete(ctx, &secret); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
 	}
 	return nil
+}
+
+// DeleteSecretIfExists deletes the secret identified by key if exists.
+func DeleteSecretIfExists(ctx context.Context, c Client, key types.NamespacedName) error {
+	var secret corev1.Secret
+	err := c.Get(ctx, key, &secret)
+	if err != nil && apierrors.IsNotFound(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	err = c.Delete(ctx, &secret)
+	if err != nil && apierrors.IsNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 // PodsMatchingLabels returns Pods from the given namespace matching the given labels.

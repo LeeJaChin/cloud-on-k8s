@@ -18,15 +18,15 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/certificates"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/hash"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/bootstrap"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/certificates/transport"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/label"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/sset"
-	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
-	"github.com/elastic/cloud-on-k8s/test/e2e/test"
+	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/certificates"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/hash"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/bootstrap"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/certificates/transport"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/label"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/sset"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
+	"github.com/elastic/cloud-on-k8s/v2/test/e2e/test"
 )
 
 const (
@@ -51,6 +51,7 @@ func (b Builder) CheckK8sTestSteps(k *test.K8sClient) test.StepList {
 		CheckClusterHealth(b, k),
 		CheckESPassword(b, k),
 		CheckESDataVolumeType(b.Elasticsearch, k),
+		CheckContainerSecurityContext(b.Elasticsearch, k),
 		CheckClusterUUIDAnnotation(b.Elasticsearch, k),
 	}
 }
@@ -68,6 +69,9 @@ func CheckHTTPCertificateAuthority(b Builder, k *test.K8sClient) test.Step {
 
 			return nil
 		}),
+		Skip: func() bool {
+			return b.GlobalCA
+		},
 	}
 }
 
@@ -84,7 +88,7 @@ func CheckTransportCertificateAuthority(b Builder, k *test.K8sClient) test.Step 
 			return nil
 		}),
 		Skip: func() bool {
-			return b.Elasticsearch.Spec.Transport.TLS.UserDefinedCA()
+			return b.Elasticsearch.Spec.Transport.TLS.UserDefinedCA() || b.GlobalCA
 		},
 	}
 }
@@ -104,14 +108,7 @@ func CheckSecrets(b Builder, k *test.K8sClient) test.Step {
 					"elasticsearch.k8s.elastic.co/cluster-name": esName,
 				},
 			},
-			{
-				Name: esName + "-es-http-ca-internal",
-				Keys: []string{"tls.crt", "tls.key"},
-				Labels: map[string]string{
-					"common.k8s.elastic.co/type":                "elasticsearch",
-					"elasticsearch.k8s.elastic.co/cluster-name": esName,
-				},
-			},
+
 			{
 				Name: esName + "-es-http-certs-internal",
 				Keys: []string{"tls.crt", "tls.key", "ca.crt"},
@@ -130,7 +127,7 @@ func CheckSecrets(b Builder, k *test.K8sClient) test.Step {
 			},
 			{
 				Name: esName + "-es-internal-users",
-				Keys: []string{"elastic-internal", "elastic-internal-monitoring", "elastic-internal-probe"},
+				Keys: []string{"elastic-internal", "elastic-internal-monitoring", "elastic-internal-pre-stop", "elastic-internal-probe"},
 				Labels: map[string]string{
 					"common.k8s.elastic.co/type":                "elasticsearch",
 					"eck.k8s.elastic.co/credentials":            "true",
@@ -154,7 +151,7 @@ func CheckSecrets(b Builder, k *test.K8sClient) test.Step {
 			},
 			{
 				Name: esName + "-es-xpack-file-realm",
-				Keys: []string{"users", "users_roles", "roles.yml"},
+				Keys: []string{"users", "users_roles", "roles.yml", "service_tokens"},
 				Labels: map[string]string{
 					"common.k8s.elastic.co/type":                "elasticsearch",
 					"elasticsearch.k8s.elastic.co/cluster-name": esName,
@@ -163,7 +160,7 @@ func CheckSecrets(b Builder, k *test.K8sClient) test.Step {
 			// esName + "-es-transport-certificates" is handled in CheckPodCertificates
 		}
 		// check internal TLS CA if no user provided CA is spec'ed
-		if !b.Elasticsearch.Spec.Transport.TLS.UserDefinedCA() {
+		if !b.Elasticsearch.Spec.Transport.TLS.UserDefinedCA() && !b.GlobalCA {
 			expected = append(expected, test.ExpectedSecret{
 				Name: esName + "-es-transport-ca-internal",
 				Keys: []string{"tls.crt", "tls.key"},
@@ -172,6 +169,20 @@ func CheckSecrets(b Builder, k *test.K8sClient) test.Step {
 					"elasticsearch.k8s.elastic.co/cluster-name": esName,
 				},
 			})
+		}
+
+		// unless a globally shared CA is used a CA secret should exist for the HTTP layer
+		if !b.GlobalCA {
+			expected = append(expected,
+				test.ExpectedSecret{
+					Name: esName + "-es-http-ca-internal",
+					Keys: []string{"tls.crt", "tls.key"},
+					Labels: map[string]string{
+						"common.k8s.elastic.co/type":                "elasticsearch",
+						"elasticsearch.k8s.elastic.co/cluster-name": esName,
+					},
+				},
+			)
 		}
 
 		for _, nodeSet := range b.Elasticsearch.Spec.NodeSets {
@@ -315,18 +326,28 @@ func CheckClusterHealth(b Builder, k *test.K8sClient) test.Step {
 	return test.Step{
 		Name: "ES cluster health should eventually be green",
 		Test: test.Eventually(func() error {
-			return clusterHealthGreen(b, k)
+			return clusterHealthIs(b, k, esv1.ElasticsearchGreenHealth)
 		}),
 	}
 }
 
-func clusterHealthGreen(b Builder, k *test.K8sClient) error {
+// CheckSpecificClusterHealth checks that the given ES status reports a given ES health
+func CheckSpecificClusterHealth(b Builder, k *test.K8sClient, health esv1.ElasticsearchHealth) test.Step {
+	return test.Step{
+		Name: fmt.Sprintf("ES cluster health should eventually be %s", string(health)),
+		Test: test.Eventually(func() error {
+			return clusterHealthIs(b, k, health)
+		}),
+	}
+}
+
+func clusterHealthIs(b Builder, k *test.K8sClient, health esv1.ElasticsearchHealth) error {
 	var es esv1.Elasticsearch
 	err := k.Client.Get(context.Background(), k8s.ExtractNamespacedName(&b.Elasticsearch), &es)
 	if err != nil {
 		return err
 	}
-	if es.Status.Health != esv1.ElasticsearchGreenHealth {
+	if es.Status.Health != health {
 		return fmt.Errorf("health is %s", es.Status.Health)
 	}
 	return nil
@@ -339,6 +360,7 @@ func CheckServices(b Builder, k *test.K8sClient) test.Step {
 		Test: test.Eventually(func() error {
 			for _, s := range []string{
 				// we intentionally hardcode the names here to catch any accidental breaking change
+				b.Elasticsearch.Name + "-es-internal-http",
 				b.Elasticsearch.Name + "-es-http",
 				b.Elasticsearch.Name + "-es-transport",
 			} {
@@ -365,8 +387,9 @@ func CheckServicesEndpoints(b Builder, k *test.K8sClient) test.Step {
 			expectedEs := b.GetExpectedElasticsearch()
 			for endpointName, addrCount := range map[string]int{
 				// we intentionally hardcode the names here to catch any accidental breaking change
-				b.Elasticsearch.Name + "-es-http":      int(expectedEs.Spec.NodeCount()),
-				b.Elasticsearch.Name + "-es-transport": int(expectedEs.Spec.NodeCount()),
+				b.Elasticsearch.Name + "-es-internal-http": int(expectedEs.Spec.NodeCount()),
+				b.Elasticsearch.Name + "-es-http":          int(expectedEs.Spec.NodeCount()),
+				b.Elasticsearch.Name + "-es-transport":     int(expectedEs.Spec.NodeCount()),
 			} {
 				if addrCount == 0 {
 					continue // maybe no Kibana
