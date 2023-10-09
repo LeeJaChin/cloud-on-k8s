@@ -29,12 +29,12 @@ steps:
     agents:
       {{- if $test.Dind }}
       provider: "gcp"
-      image: "family/elastic-buildkite-agent-ubuntu-2004-lts"
+      image: "family/core-ubuntu-2004"
       {{- if eq $test.Provider "kind" }}
       machineType: "{{ .KindAgentsMachineType }}"
       {{- end }}
       {{- else }}
-      image: docker.elastic.co/ci-agent-images/cloud-k8s-operator/buildkite-agent:abaeba8c
+      image: docker.elastic.co/ci-agent-images/cloud-k8s-operator/buildkite-agent:bfddf2b3
       memory: "4G"
       {{- end }}
 
@@ -80,12 +80,12 @@ steps:
     agents:
       {{- if $test.Dind }}
       provider: "gcp"
-      image: "family/elastic-buildkite-agent-ubuntu-2004-lts"
+      image: "family/core-ubuntu-2004"
       {{- if eq $test.Provider "kind" }}
       machineType: "{{ $.KindAgentsMachineType }}"
       {{- end }}
       {{- else }}
-      image: docker.elastic.co/ci-agent-images/cloud-k8s-operator/buildkite-agent:abaeba8c
+      image: docker.elastic.co/ci-agent-images/cloud-k8s-operator/buildkite-agent:bfddf2b3
       memory: "4G"
       {{- end }}
 
@@ -115,24 +115,21 @@ steps:
           {{$key}}: "{{$val}}"
           {{- end }}
           DEPLOYER_OPERATION: delete
-
+        soft_fail:
+          - exit_status: 1
         commands:
           - .buildkite/scripts/test/set-deployer-config.sh
-
         {{- if not $test.Dind }}
           - make run-deployer
         agents:
-          image: docker.elastic.co/ci-agent-images/cloud-k8s-operator/buildkite-agent:abaeba8c
+          image: docker.elastic.co/ci-agent-images/cloud-k8s-operator/buildkite-agent:bfddf2b3
           memory: "4G"
         {{- else }}
           - make -C .buildkite TARGET="run-deployer" ci
         agents:
           provider: "gcp"
-          image: "family/elastic-buildkite-agent-ubuntu-2004-lts"
+          image: "family/core-ubuntu-2004"
         {{- end }}
-        retry:
-          automatic:
-            - limit: 5
 
     {{- end }}
 {{- end }}
@@ -148,5 +145,5 @@ steps:
       - ".buildkite/e2e/reporter/*.md"
       - ".buildkite/e2e/reporter/*.yml"
     agents:
-      image: docker.elastic.co/ci-agent-images/cloud-k8s-operator/buildkite-agent:abaeba8c
+      image: docker.elastic.co/ci-agent-images/cloud-k8s-operator/buildkite-agent:bfddf2b3
       memory: "2G"

@@ -6,7 +6,7 @@ metadata:
   name: metricbeat
 spec:
   type: metricbeat
-  version: 8.8.0
+  version: 8.10.2
   elasticsearchRef:
     name: elasticsearch-monitoring
   config:
@@ -91,6 +91,20 @@ rules:
   - get
   - watch
   - list
+- apiGroups: ["apps"]
+  resources:
+  - replicasets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups: ["batch"]
+  resources:
+  - jobs
+  verbs:
+  - get
+  - list
+  - watch
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -118,7 +132,7 @@ metadata:
   name: filebeat
 spec:
   type: filebeat
-  version: 8.8.0
+  version: 8.10.2
   elasticsearchRef:
     name: elasticsearch-monitoring
   kibanaRef:
@@ -190,6 +204,20 @@ rules:
   - get
   - watch
   - list
+- apiGroups: ["apps"]
+  resources:
+  - replicasets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups: ["batch"]
+  resources:
+  - jobs
+  verbs:
+  - get
+  - list
+  - watch
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -216,7 +244,7 @@ kind: Elasticsearch
 metadata:
   name: elasticsearch
 spec:
-  version: 8.8.0
+  version: 8.10.2
   nodeSets:
   - name: default
     count: 3
@@ -232,7 +260,7 @@ kind: Kibana
 metadata:
   name: kibana
 spec:
-  version: 8.8.0
+  version: 8.10.2
   count: 1
   elasticsearchRef:
     name: elasticsearch
@@ -249,7 +277,7 @@ kind: Elasticsearch
 metadata:
   name: elasticsearch-monitoring
 spec:
-  version: 8.8.0
+  version: 8.10.2
   nodeSets:
   - name: default
     count: 3
@@ -261,7 +289,7 @@ kind: Kibana
 metadata:
   name: kibana-monitoring
 spec:
-  version: 8.8.0
+  version: 8.10.2
   count: 1
   elasticsearchRef:
     name: elasticsearch-monitoring
