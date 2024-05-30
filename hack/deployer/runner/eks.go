@@ -261,7 +261,7 @@ func (e *EKSDriver) Cleanup(prefix string, olderThan time.Duration) error {
 		return err
 	}
 
-	describeClusterCmd := `aws eks describe-cluster --name "{{.ClusterName}}" --region "{{.Region}}" | jq -r --arg d "{{.Date}}" 'map(select(.cluster.createdAt | . <= $d))|.[].cluster.name'`
+	describeClusterCmd := `aws eks describe-cluster --name "{{.ClusterName}}" --region "{{.Region}}" | jq -r --arg d "{{.Date}}" 'select(.cluster.createdAt | . <= $d) | .cluster.name'`
 
 	for _, cluster := range allClusters {
 		e.ctx["ClusterName"] = cluster
@@ -283,7 +283,8 @@ func (e *EKSDriver) Cleanup(prefix string, olderThan time.Duration) error {
 func (e *EKSDriver) delete() error {
 	log.Printf("Deleting cluster %s", e.ctx["ClusterName"])
 	// --wait to surface failures to delete all resources in the Cloud formation
-	return e.newCmd("eksctl delete cluster -v 1 --name {{.ClusterName}} --region {{.Region}} --wait").Run()
+	// --disable-nodegroup-eviction to avoid pod disruption budgets causing nodegroup draining to fail.
+	return e.newCmd("eksctl delete cluster -v 1 --name {{.ClusterName}} --region {{.Region}} --wait --disable-nodegroup-eviction").Run()
 }
 
 var _ Driver = &EKSDriver{}

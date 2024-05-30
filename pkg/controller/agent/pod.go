@@ -90,13 +90,14 @@ const (
 )
 
 var (
+	// TODO: Decrease back to 350Mi once https://github.com/elastic/elastic-agent/issues/4730 is addressed
 	defaultResources = corev1.ResourceRequirements{
 		Limits: map[corev1.ResourceName]resource.Quantity{
-			corev1.ResourceMemory: resource.MustParse("350Mi"),
+			corev1.ResourceMemory: resource.MustParse("400Mi"),
 			corev1.ResourceCPU:    resource.MustParse("200m"),
 		},
 		Requests: map[corev1.ResourceName]resource.Quantity{
-			corev1.ResourceMemory: resource.MustParse("350Mi"),
+			corev1.ResourceMemory: resource.MustParse("400Mi"),
 			corev1.ResourceCPU:    resource.MustParse("200m"),
 		},
 	}
@@ -153,7 +154,7 @@ func buildPodTemplate(params Params, fleetCerts *certificates.CertificatesSecret
 			WithArgs("-e", "-c", path.Join(ConfigMountPath, ConfigFileName))
 	}
 
-	v, err := version.Parse(params.Agent.Spec.Version)
+	v, err := version.Parse(spec.Version)
 	if err != nil {
 		return corev1.PodTemplateSpec{}, err // error unlikely and should have been caught during validation
 	}
@@ -170,7 +171,7 @@ func buildPodTemplate(params Params, fleetCerts *certificates.CertificatesSecret
 	}
 	vols = append(vols, caAssocVols...)
 
-	labels := maps.Merge(params.Agent.GetIdentityLabels(), map[string]string{
+	agentLabels := maps.Merge(params.Agent.GetIdentityLabels(), map[string]string{
 		VersionLabelName: spec.Version})
 
 	annotations := map[string]string{
@@ -178,9 +179,9 @@ func buildPodTemplate(params Params, fleetCerts *certificates.CertificatesSecret
 	}
 
 	builder = builder.
-		WithLabels(labels).
+		WithLabels(agentLabels).
 		WithAnnotations(annotations).
-		WithDockerImage(spec.Image, container.ImageRepository(container.AgentImage, spec.Version)).
+		WithDockerImage(spec.Image, container.ImageRepository(container.AgentImage, v)).
 		WithAutomountServiceAccountToken().
 		WithVolumeLikes(vols...).
 		WithEnv(
@@ -333,16 +334,6 @@ func applyRelatedEsAssoc(agent agentv1alpha1.Agent, esAssociation commonv1.Assoc
 		return builder, nil
 	}
 
-	esRef := esAssociation.AssociationRef()
-	if !esRef.IsExternal() && !agent.Spec.FleetServerEnabled && agent.Namespace != esRef.Namespace {
-		// check agent and ES share the same namespace
-		return nil, fmt.Errorf(
-			"agent namespace %s is different than referenced Elasticsearch namespace %s, this is not supported yet",
-			agent.Namespace,
-			esAssociation.AssociationRef().Namespace,
-		)
-	}
-
 	// no ES CA to configure, skip
 	assocConf, err := esAssociation.AssociationConf()
 	if err != nil {
@@ -372,13 +363,16 @@ func applyRelatedEsAssoc(agent agentv1alpha1.Agent, esAssociation commonv1.Assoc
 }
 
 func runningAsRoot(agent agentv1alpha1.Agent) bool {
-	if agent.Spec.DaemonSet != nil {
+	switch {
+	case agent.Spec.DaemonSet != nil:
 		return runningContainerAsRoot(agent.Spec.DaemonSet.PodTemplate)
-	}
-	if agent.Spec.Deployment != nil {
+	case agent.Spec.Deployment != nil:
 		return runningContainerAsRoot(agent.Spec.Deployment.PodTemplate)
+	case agent.Spec.StatefulSet != nil:
+		return runningContainerAsRoot(agent.Spec.StatefulSet.PodTemplate)
+	default:
+		return false
 	}
-	return false
 }
 
 func runningContainerAsRoot(podTemplate corev1.PodTemplateSpec) bool {
@@ -387,9 +381,9 @@ func runningContainerAsRoot(podTemplate corev1.PodTemplateSpec) bool {
 		*podTemplate.Spec.SecurityContext.RunAsUser == 0 {
 		return true
 	}
-	for _, container := range podTemplate.Spec.Containers {
-		if container.SecurityContext != nil && container.SecurityContext.RunAsUser != nil {
-			if *container.SecurityContext.RunAsUser == 0 {
+	for _, podContainer := range podTemplate.Spec.Containers {
+		if podContainer.SecurityContext != nil && podContainer.SecurityContext.RunAsUser != nil {
+			if *podContainer.SecurityContext.RunAsUser == 0 {
 				return true
 			}
 		}

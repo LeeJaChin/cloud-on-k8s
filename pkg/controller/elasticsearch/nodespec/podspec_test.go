@@ -15,12 +15,16 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	ptr "k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
 	esv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/elasticsearch/v1"
+	policyv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/stackconfigpolicy/v1alpha1"
+	commonannotation "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/annotation"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/defaults"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/hash"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/keystore"
+	common "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/settings"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/volume"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/initcontainer"
@@ -28,7 +32,6 @@ import (
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/user"
 	esvolume "github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/volume"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
-	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/pointer"
 )
 
 type esSampleBuilder struct {
@@ -151,8 +154,8 @@ func TestBuildPodTemplateSpecWithDefaultSecurityContext(t *testing.T) {
 			name:                "pre-8.0, setting off, user context",
 			version:             version.MustParse("7.8.0"),
 			setDefaultFSGroup:   false,
-			userSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
-			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
+			userSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
+			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
 		},
 		{
 			name:                "pre-8.0, setting on, no user context",
@@ -165,8 +168,8 @@ func TestBuildPodTemplateSpecWithDefaultSecurityContext(t *testing.T) {
 			name:                "pre-8.0, setting on, user context",
 			version:             version.MustParse("7.8.0"),
 			setDefaultFSGroup:   true,
-			userSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
-			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
+			userSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
+			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
 		},
 		{
 			name:                "8.0+, setting off, no user context",
@@ -179,22 +182,22 @@ func TestBuildPodTemplateSpecWithDefaultSecurityContext(t *testing.T) {
 			name:                "8.0+, setting off, user context",
 			version:             version.MustParse("8.0.0"),
 			setDefaultFSGroup:   false,
-			userSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
-			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
+			userSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
+			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
 		},
 		{
 			name:                "8.0+, setting on, no user context",
 			version:             version.MustParse("8.0.0"),
 			setDefaultFSGroup:   true,
 			userSecurityContext: nil,
-			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(1000)},
+			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](1000)},
 		},
 		{
 			name:                "8.0+, setting on, user context",
 			version:             version.MustParse("8.0.0"),
 			setDefaultFSGroup:   true,
-			userSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
-			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: pointer.Int64(123)},
+			userSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
+			wantSecurityContext: &corev1.PodSecurityContext{FSGroup: ptr.To[int64](123)},
 		},
 		{
 			name:                "8.0+, setting on, empty user context",
@@ -209,11 +212,11 @@ func TestBuildPodTemplateSpecWithDefaultSecurityContext(t *testing.T) {
 			es.Spec.Version = tt.version.String()
 			es.Spec.NodeSets[0].PodTemplate.Spec.SecurityContext = tt.userSecurityContext
 
-			cfg, err := settings.NewMergedESConfig(es.Name, tt.version, corev1.IPv4Protocol, es.Spec.HTTP, *es.Spec.NodeSets[0].Config)
+			cfg, err := settings.NewMergedESConfig(es.Name, tt.version, corev1.IPv4Protocol, es.Spec.HTTP, *es.Spec.NodeSets[0].Config, nil)
 			require.NoError(t, err)
 
 			client := k8s.NewFakeClient(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: es.Namespace, Name: esv1.ScriptsConfigMap(es.Name)}})
-			actual, err := BuildPodTemplateSpec(context.Background(), client, es, es.Spec.NodeSets[0], cfg, nil, tt.setDefaultFSGroup)
+			actual, err := BuildPodTemplateSpec(context.Background(), client, es, es.Spec.NodeSets[0], cfg, nil, tt.setDefaultFSGroup, PolicyConfig{})
 			require.NoError(t, err)
 			require.Equal(t, tt.wantSecurityContext, actual.Spec.SecurityContext)
 		})
@@ -225,11 +228,31 @@ func TestBuildPodTemplateSpec(t *testing.T) {
 	nodeSet := sampleES.Spec.NodeSets[0]
 	ver, err := version.Parse(sampleES.Spec.Version)
 	require.NoError(t, err)
-	cfg, err := settings.NewMergedESConfig(sampleES.Name, ver, corev1.IPv4Protocol, sampleES.Spec.HTTP, *nodeSet.Config)
+	policyEsConfig := common.MustCanonicalConfig(map[string]interface{}{
+		"logger.org.elasticsearch.discovery": "DEBUG",
+	})
+	secretMounts := []policyv1alpha1.SecretMount{{
+		SecretName: "test-es-secretname",
+		MountPath:  "/usr/test",
+	}}
+
+	elasticsearchConfigAndMountsHash := hash.HashObject([]interface{}{policyEsConfig, secretMounts})
+
+	policyConfig := PolicyConfig{
+		ElasticsearchConfig: policyEsConfig,
+		AdditionalVolumes: []volume.VolumeLike{
+			volume.NewSecretVolumeWithMountPath("test-es-secretname", "test-es-secretname", "/usr/test"),
+		},
+		PolicyAnnotations: map[string]string{
+			commonannotation.ElasticsearchConfigAndSecretMountsHashAnnotation: elasticsearchConfigAndMountsHash,
+		},
+	}
+
+	cfg, err := settings.NewMergedESConfig(sampleES.Name, ver, corev1.IPv4Protocol, sampleES.Spec.HTTP, *nodeSet.Config, policyConfig.ElasticsearchConfig)
 	require.NoError(t, err)
 
 	client := k8s.NewFakeClient(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: sampleES.Namespace, Name: esv1.ScriptsConfigMap(sampleES.Name)}})
-	actual, err := BuildPodTemplateSpec(context.Background(), client, sampleES, sampleES.Spec.NodeSets[0], cfg, nil, false)
+	actual, err := BuildPodTemplateSpec(context.Background(), client, sampleES, sampleES.Spec.NodeSets[0], cfg, nil, false, policyConfig)
 	require.NoError(t, err)
 
 	// build expected PodTemplateSpec
@@ -237,7 +260,7 @@ func TestBuildPodTemplateSpec(t *testing.T) {
 	terminationGracePeriodSeconds := DefaultTerminationGracePeriodSeconds
 	varFalse := false
 
-	volumes, volumeMounts := buildVolumes(sampleES.Name, ver, nodeSet, nil, volume.DownwardAPI{})
+	volumes, volumeMounts := buildVolumes(sampleES.Name, ver, nodeSet, nil, volume.DownwardAPI{}, policyConfig.AdditionalVolumes)
 	// should be sorted
 	sort.Slice(volumes, func(i, j int) bool { return volumes[i].Name < volumes[j].Name })
 	sort.Slice(volumeMounts, func(i, j int) bool { return volumeMounts[i].Name < volumeMounts[j].Name })
@@ -263,9 +286,9 @@ func TestBuildPodTemplateSpec(t *testing.T) {
 		initContainers[i].VolumeMounts = append(initContainers[i].VolumeMounts, volumeMounts...)
 		initContainers[i].Resources = DefaultResources
 		initContainers[i].SecurityContext = &corev1.SecurityContext{
-			Privileged:               ptr.Bool(false),
-			ReadOnlyRootFilesystem:   ptr.Bool(false),
-			AllowPrivilegeEscalation: ptr.Bool(false),
+			Privileged:               ptr.To[bool](false),
+			ReadOnlyRootFilesystem:   ptr.To[bool](false),
+			AllowPrivilegeEscalation: ptr.To[bool](false),
 		}
 	}
 
@@ -297,9 +320,10 @@ func TestBuildPodTemplateSpec(t *testing.T) {
 				"pod-template-label-name":                       "pod-template-label-value",
 			},
 			Annotations: map[string]string{
-				"elasticsearch.k8s.elastic.co/config-hash": "533641620",
-				"pod-template-annotation-name":             "pod-template-annotation-value",
-				"co.elastic.logs/module":                   "elasticsearch",
+				"elasticsearch.k8s.elastic.co/config-hash":               "267866193",
+				"pod-template-annotation-name":                           "pod-template-annotation-value",
+				"co.elastic.logs/module":                                 "elasticsearch",
+				"policy.k8s.elastic.co/elasticsearch-config-mounts-hash": "2095567618",
 			},
 		},
 		Spec: corev1.PodSpec{
@@ -311,19 +335,19 @@ func TestBuildPodTemplateSpec(t *testing.T) {
 				VolumeMounts: volumeMounts,
 				Resources:    DefaultResources, // inherited from main container
 				SecurityContext: &corev1.SecurityContext{
-					Privileged: ptr.Bool(false),
+					Privileged: ptr.To[bool](false),
 					// ReadOnlyRootFilesystem is expected to be false in this test because there is no data volume.
-					ReadOnlyRootFilesystem:   ptr.Bool(false),
-					AllowPrivilegeEscalation: ptr.Bool(false),
+					ReadOnlyRootFilesystem:   ptr.To[bool](false),
+					AllowPrivilegeEscalation: ptr.To[bool](false),
 				},
 			}),
 			Containers: []corev1.Container{
 				{
 					Name: "additional-container",
 					SecurityContext: &corev1.SecurityContext{
-						Privileged:               ptr.Bool(false),
-						ReadOnlyRootFilesystem:   ptr.Bool(false),
-						AllowPrivilegeEscalation: ptr.Bool(false),
+						Privileged:               ptr.To[bool](false),
+						ReadOnlyRootFilesystem:   ptr.To[bool](false),
+						AllowPrivilegeEscalation: ptr.To[bool](false),
 					},
 				},
 				{
@@ -343,9 +367,9 @@ func TestBuildPodTemplateSpec(t *testing.T) {
 						PreStop: NewPreStopHook(),
 					},
 					SecurityContext: &corev1.SecurityContext{
-						Privileged:               ptr.Bool(false),
-						ReadOnlyRootFilesystem:   ptr.Bool(false),
-						AllowPrivilegeEscalation: ptr.Bool(false),
+						Privileged:               ptr.To[bool](false),
+						ReadOnlyRootFilesystem:   ptr.To[bool](false),
+						AllowPrivilegeEscalation: ptr.To[bool](false),
 					},
 				},
 			},
@@ -365,6 +389,7 @@ func Test_buildAnnotations(t *testing.T) {
 		esAnnotations     map[string]string
 		keystoreResources *keystore.Resources
 		scriptsContent    string
+		policyAnnotations map[string]string
 	}
 	tests := []struct {
 		name                string
@@ -413,7 +438,7 @@ func Test_buildAnnotations(t *testing.T) {
 			name: "With keystore and scripts content",
 			args: args{
 				keystoreResources: &keystore.Resources{
-					Version: "42",
+					Hash: "42",
 				},
 				scriptsContent: "scripts content",
 			},
@@ -425,7 +450,7 @@ func Test_buildAnnotations(t *testing.T) {
 			name: "With another keystore version",
 			args: args{
 				keystoreResources: &keystore.Resources{
-					Version: "43",
+					Hash: "43",
 				},
 				scriptsContent: "scripts content",
 			},
@@ -437,12 +462,23 @@ func Test_buildAnnotations(t *testing.T) {
 			name: "With another script version",
 			args: args{
 				keystoreResources: &keystore.Resources{
-					Version: "42",
+					Hash: "42",
 				},
 				scriptsContent: "another scripts content",
 			},
 			expectedAnnotations: map[string]string{
 				"elasticsearch.k8s.elastic.co/config-hash": "1050348692",
+			},
+		},
+		{
+			name: "With policy annotations",
+			args: args{
+				policyAnnotations: map[string]string{
+					commonannotation.ElasticsearchConfigAndSecretMountsHashAnnotation: "testhash",
+				},
+			},
+			expectedAnnotations: map[string]string{
+				commonannotation.ElasticsearchConfigAndSecretMountsHashAnnotation: "testhash",
 			},
 		},
 	}
@@ -451,9 +487,9 @@ func Test_buildAnnotations(t *testing.T) {
 			es := newEsSampleBuilder().withKeystoreResources(tt.args.keystoreResources).withUserConfig(tt.args.cfg).addEsAnnotations(tt.args.esAnnotations).build()
 			ver, err := version.Parse(sampleES.Spec.Version)
 			require.NoError(t, err)
-			cfg, err := settings.NewMergedESConfig(es.Name, ver, corev1.IPv4Protocol, es.Spec.HTTP, *es.Spec.NodeSets[0].Config)
+			cfg, err := settings.NewMergedESConfig(es.Name, ver, corev1.IPv4Protocol, es.Spec.HTTP, *es.Spec.NodeSets[0].Config, nil)
 			require.NoError(t, err)
-			got := buildAnnotations(es, cfg, tt.args.keystoreResources, tt.args.scriptsContent)
+			got := buildAnnotations(es, cfg, tt.args.keystoreResources, tt.args.scriptsContent, tt.args.policyAnnotations)
 
 			for expectedAnnotation, expectedValue := range tt.expectedAnnotations {
 				actualValue, exists := got[expectedAnnotation]
@@ -548,10 +584,10 @@ func Test_enableLog4JFormatMsgNoLookups(t *testing.T) {
 
 			ver, err := version.Parse(sampleES.Spec.Version)
 			require.NoError(t, err)
-			cfg, err := settings.NewMergedESConfig(sampleES.Name, ver, corev1.IPv4Protocol, sampleES.Spec.HTTP, *sampleES.Spec.NodeSets[0].Config)
+			cfg, err := settings.NewMergedESConfig(sampleES.Name, ver, corev1.IPv4Protocol, sampleES.Spec.HTTP, *sampleES.Spec.NodeSets[0].Config, nil)
 			require.NoError(t, err)
 			client := k8s.NewFakeClient(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: sampleES.Namespace, Name: esv1.ScriptsConfigMap(sampleES.Name)}})
-			actual, err := BuildPodTemplateSpec(context.Background(), client, sampleES, sampleES.Spec.NodeSets[0], cfg, nil, false)
+			actual, err := BuildPodTemplateSpec(context.Background(), client, sampleES, sampleES.Spec.NodeSets[0], cfg, nil, false, PolicyConfig{})
 			require.NoError(t, err)
 
 			env := actual.Spec.Containers[1].Env

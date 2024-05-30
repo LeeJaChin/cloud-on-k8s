@@ -10,10 +10,10 @@ import (
 	"github.com/blang/semver/v4"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/hash"
-	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/pointer"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/set"
 )
 
@@ -221,6 +221,8 @@ type Auth struct {
 	Roles []RoleSource `json:"roles,omitempty"`
 	// FileRealm to propagate to the Elasticsearch cluster.
 	FileRealm []FileRealmSource `json:"fileRealm,omitempty"`
+	// DisableElasticUser disables the default elastic user that is created by ECK.
+	DisableElasticUser bool `json:"disableElasticUser,omitempty"`
 }
 
 // RoleSource references roles to create in the Elasticsearch cluster.
@@ -355,7 +357,7 @@ type ChangeBudget struct {
 // most cases.
 var DefaultChangeBudget = ChangeBudget{
 	MaxSurge:       nil,
-	MaxUnavailable: pointer.Int32(1),
+	MaxUnavailable: ptr.To[int32](1),
 }
 
 func (cb ChangeBudget) GetMaxSurgeOrDefault() *int32 {
@@ -547,6 +549,10 @@ func (ema *EsMonitoringAssociation) SetAssociationConf(assocConf *commonv1.Assoc
 	if assocConf != nil {
 		ema.AssocConfs[ema.ref] = *assocConf
 	}
+}
+
+func (ema *EsMonitoringAssociation) SupportsAuthAPIKey() bool {
+	return false
 }
 
 func (ema *EsMonitoringAssociation) AssociationID() string {

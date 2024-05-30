@@ -11,36 +11,48 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"net/http"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/jsonpath"
 
 	commonv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/common/v1"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/certificates"
+	commonhash "github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/hash"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/reconciler"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/common/version"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/elasticsearch/client"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/utils/k8s"
 )
 
 const (
-	// authPasswordUnmanagedSecretKey is the name of the key for the username when using a secret to reference an unmanaged resource
+	// authUsernameUnmanagedSecretKey is the name of the key for the username when using a secret to reference an unmanaged resource
 	authUsernameUnmanagedSecretKey = "username"
 	// authPasswordUnmanagedSecretKey is the name of the key for the password when using a secret to reference an unmanaged resource
 	authPasswordUnmanagedSecretKey = "password"
+	// authAPIKeyUnmanagedSecretKey is the name of the key for the API key when using a secret to reference an unmanaged resource
+	authAPIKeyUnmanagedSecretKey = "api-key"
+)
+
+const (
+	AuthTypeUnmanagedBasic = iota
+	AuthTypeUnmanagedAPIKey
 )
 
 // ExpectedConfigFromUnmanagedAssociation returns the association configuration to associate the external unmanaged resource referenced
 // in the given association.
 func (r *Reconciler) ExpectedConfigFromUnmanagedAssociation(association commonv1.Association) (commonv1.AssociationConf, error) {
 	assocRef := association.AssociationRef()
-	info, err := GetUnmanagedAssociationConnectionInfoFromSecret(r.Client, assocRef)
+	info, err := GetUnmanagedAssociationConnectionInfoFromSecret(r.Client, association)
 	if err != nil {
 		return commonv1.AssociationConf{}, err
 	}
 
 	var ver string
-	ver, err = r.ReferencedResourceVersion(r.Client, assocRef)
+	ver, err = r.ReferencedResourceVersion(r.Client, association)
 	if err != nil {
 		return commonv1.AssociationConf{}, err
 	}
@@ -51,9 +63,17 @@ func (r *Reconciler) ExpectedConfigFromUnmanagedAssociation(association commonv1
 		URL:     info.URL,
 		// points the auth secret to the custom secret
 		AuthSecretName: assocRef.SecretName,
-		AuthSecretKey:  authPasswordUnmanagedSecretKey,
 		CACertProvided: info.CaCert != "",
 	}
+
+	if info.APIKey != "" {
+		expectedAssocConf.IsAPIKey = true
+		expectedAssocConf.AuthSecretKey = authAPIKeyUnmanagedSecretKey
+	} else {
+		expectedAssocConf.IsAPIKey = false
+		expectedAssocConf.AuthSecretKey = authPasswordUnmanagedSecretKey
+	}
+
 	// points the ca secret to the custom secret if needed
 	if expectedAssocConf.CACertProvided {
 		expectedAssocConf.CASecretName = assocRef.SecretName
@@ -68,34 +88,54 @@ type UnmanagedAssociationConnectionInfo struct {
 	URL      string
 	Username string
 	Password string
+	APIKey   string
 	CaCert   string
 }
 
+type UnmanagedAssociation interface {
+	AssociationRef() commonv1.ObjectSelector
+	SupportsAuthAPIKey() bool
+}
+
 // GetUnmanagedAssociationConnectionInfoFromSecret returns the UnmanagedAssociationConnectionInfo corresponding to the Secret referenced in the ObjectSelector o.
-func GetUnmanagedAssociationConnectionInfoFromSecret(c k8s.Client, o commonv1.ObjectSelector) (*UnmanagedAssociationConnectionInfo, error) {
+func GetUnmanagedAssociationConnectionInfoFromSecret(c k8s.Client, association UnmanagedAssociation) (*UnmanagedAssociationConnectionInfo, error) {
 	var secretRef corev1.Secret
-	secretRefKey := o.NamespacedName()
+	assocRef := association.AssociationRef()
+	secretRefKey := assocRef.NamespacedName()
 	if err := c.Get(context.Background(), secretRefKey, &secretRef); err != nil {
 		return nil, err
 	}
-	url, ok := secretRef.Data["url"]
-	if !ok {
-		return nil, fmt.Errorf("url secret key doesn't exist in secret %s", o.SecretName)
-	}
-	username, ok := secretRef.Data[authUsernameUnmanagedSecretKey]
-	if !ok {
-		return nil, fmt.Errorf("username secret key doesn't exist in secret %s", o.SecretName)
-	}
-	password, ok := secretRef.Data[authPasswordUnmanagedSecretKey]
-	if !ok {
-		return nil, fmt.Errorf("password secret key doesn't exist in secret %s", o.SecretName)
-	}
 
-	ref := UnmanagedAssociationConnectionInfo{URL: string(url), Username: string(username), Password: string(password)}
+	ref := UnmanagedAssociationConnectionInfo{}
 	caCert, ok := secretRef.Data[certificates.CAFileName]
 	if ok {
 		ref.CaCert = string(caCert)
 	}
+
+	url, ok := secretRef.Data["url"]
+	if !ok {
+		return nil, fmt.Errorf("url secret key doesn't exist in secret %s", assocRef.SecretName)
+	}
+	ref.URL = string(url)
+
+	if association.SupportsAuthAPIKey() {
+		if apiKey, ok := secretRef.Data[authAPIKeyUnmanagedSecretKey]; ok {
+			ref.APIKey = string(apiKey)
+			return &ref, nil
+		}
+	}
+
+	username, ok := secretRef.Data[authUsernameUnmanagedSecretKey]
+	if !ok {
+		return nil, fmt.Errorf("username secret key doesn't exist in secret %s", assocRef.SecretName)
+	}
+	ref.Username = string(username)
+
+	password, ok := secretRef.Data[authPasswordUnmanagedSecretKey]
+	if !ok {
+		return nil, fmt.Errorf("password secret key doesn't exist in secret %s", assocRef.SecretName)
+	}
+	ref.Password = string(password)
 
 	return &ref, nil
 }
@@ -124,7 +164,12 @@ func (r UnmanagedAssociationConnectionInfo) Request(path string, jsonPath string
 	if err != nil {
 		return "", err
 	}
-	req.SetBasicAuth(r.Username, r.Password)
+
+	if r.APIKey != "" {
+		req.Header.Set("Authorization", "ApiKey "+r.APIKey)
+	} else {
+		req.SetBasicAuth(r.Username, r.Password)
+	}
 
 	httpClient := &http.Client{
 		Timeout: client.DefaultESClientTimeout,
@@ -188,4 +233,33 @@ func filterManagedElasticRef(associations []commonv1.Association) []commonv1.Ass
 		}
 	}
 	return r
+}
+
+// copySecret will copy the source secret to the target namespace adding labels from the associated object to ensure garbage collection happens.
+func copySecret(ctx context.Context, client k8s.Client, secHash hash.Hash, targetNamespace string, source types.NamespacedName) error {
+	var original corev1.Secret
+	if err := client.Get(ctx, source, &original); err != nil {
+		return err
+	}
+	// update the hash if there are additional secrets event if
+	// they are in the same namespace to ensure that the pods are
+	// rotated when the original CA secret is updated.
+	commonhash.WriteHashObject(secHash, original.Data)
+	if targetNamespace == original.Namespace {
+		return nil
+	}
+
+	expected := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        original.Name,
+			Namespace:   targetNamespace,
+			Labels:      original.Labels,
+			Annotations: original.Annotations,
+		},
+		Data: original.Data,
+		Type: original.Type,
+	}
+
+	_, err := reconciler.ReconcileSecret(ctx, client, expected, nil)
+	return err
 }

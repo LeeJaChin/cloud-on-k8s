@@ -16,9 +16,6 @@ import (
 	"strings"
 	"time"
 
-	logstashv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/logstash/v1alpha1"
-	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/logstash"
-
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -55,6 +52,7 @@ import (
 	entv1beta1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/enterprisesearch/v1beta1"
 	kbv1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/kibana/v1"
 	kbv1beta1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/kibana/v1beta1"
+	logstashv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/logstash/v1alpha1"
 	emsv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/maps/v1alpha1"
 	policyv1alpha1 "github.com/elastic/cloud-on-k8s/v2/pkg/apis/stackconfigpolicy/v1alpha1"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/agent"
@@ -82,6 +80,8 @@ import (
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/kibana"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/license"
 	licensetrial "github.com/elastic/cloud-on-k8s/v2/pkg/controller/license/trial"
+	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/logstash"
+	lsvalidation "github.com/elastic/cloud-on-k8s/v2/pkg/controller/logstash/validation"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/maps"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/remoteca"
 	"github.com/elastic/cloud-on-k8s/v2/pkg/controller/stackconfigpolicy"
@@ -285,7 +285,12 @@ func Command() *cobra.Command {
 	cmd.Flags().Int(
 		operator.MetricsPortFlag,
 		DefaultMetricPort,
-		"Port to use for exposing metrics in the Prometheus format (set 0 to disable)",
+		"Port to use for exposing metrics in the Prometheus format. (set 0 to disable)",
+	)
+	cmd.Flags().String(
+		operator.MetricsHostFlag,
+		"0.0.0.0",
+		fmt.Sprintf("The host to which the operator should bind to serve metrics in the Prometheus format. Will be combined with %s.", operator.MetricsPortFlag),
 	)
 	cmd.Flags().StringSlice(
 		operator.NamespacesFlag,
@@ -507,7 +512,7 @@ func startOperator(ctx context.Context) error {
 	// enforce UBI stack images if requested
 	ubiOnly := viper.GetBool(operator.UBIOnlyFlag)
 	if ubiOnly {
-		container.SetContainerSuffix("-ubi8")
+		container.SetContainerSuffix(container.UBISuffix)
 		version.GlobalMinStackVersion = version.From(7, 10, 0)
 	}
 
@@ -576,11 +581,12 @@ func startOperator(ctx context.Context) error {
 
 	// only expose prometheus metrics if provided a non-zero port
 	metricsPort := viper.GetInt(operator.MetricsPortFlag)
+	metricsHost := viper.GetString(operator.MetricsHostFlag)
 	if metricsPort != 0 {
-		log.Info("Exposing Prometheus metrics on /metrics", "port", metricsPort)
+		log.Info("Exposing Prometheus metrics on /metrics", "bindAddress", fmt.Sprintf("%s:%d", metricsHost, metricsPort))
 	}
 	opts.Metrics = metricsserver.Options{
-		BindAddress: fmt.Sprintf(":%d", metricsPort), // 0 to disable
+		BindAddress: fmt.Sprintf("%s:%d", metricsHost, metricsPort), // 0 to disable
 	}
 
 	webhookPort := viper.GetInt(operator.WebhookPortFlag)
@@ -1011,7 +1017,7 @@ func setupWebhook(
 		&kbv1.Kibana{},
 		&kbv1beta1.Kibana{},
 		&emsv1alpha1.ElasticMapsServer{},
-		&logstashv1alpha1.Logstash{},
+		&policyv1alpha1.StackConfigPolicy{},
 	}
 	for _, obj := range webhookObjects {
 		if err := commonwebhook.SetupValidatingWebhookWithConfig(&commonwebhook.Config{
@@ -1026,9 +1032,10 @@ func setupWebhook(
 		}
 	}
 
-	// Elasticsearch and ElasticsearchAutoscaling validating webhooks are wired up differently, in order to access the k8s client
+	// Logstash, Elasticsearch and ElasticsearchAutoscaling validating webhooks are wired up differently, in order to access the k8s client
 	esvalidation.RegisterWebhook(mgr, params.ValidateStorageClass, exposedNodeLabels, checker, managedNamespaces)
 	esavalidation.RegisterWebhook(mgr, params.ValidateStorageClass, checker, managedNamespaces)
+	lsvalidation.RegisterWebhook(mgr, params.ValidateStorageClass, managedNamespaces)
 
 	// wait for the secret to be populated in the local filesystem before returning
 	interval := time.Second * 1
