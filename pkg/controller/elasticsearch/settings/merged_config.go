@@ -83,6 +83,10 @@ func baseConfig(clusterName string, ver version.Version, ipFamily corev1.IPFamil
 		cfg[esv1.DiscoverySeedHosts] = []string{}
 	}
 
+	if ver.GTE(esv1.MinReadinessPortVersion) {
+		cfg[esv1.ReadinessPort] = "8080"
+	}
+
 	return &CanonicalConfig{common.MustCanonicalConfig(cfg)}
 }
 
@@ -103,14 +107,12 @@ func xpackConfig(ver version.Version, httpCfg commonv1.HTTPConfig) *CanonicalCon
 		// x-pack security transport settings
 		esv1.XPackSecurityTransportSslEnabled: "true",
 		esv1.XPackSecurityTransportSslKey: path.Join(
-			volume.ConfigVolumeMountPath,
-			volume.NodeTransportCertificatePathSegment,
-			volume.NodeTransportCertificateKeyFile,
+			volume.TransportCertificatesSecretVolumeMountPath,
+			"${POD_NAME}."+certificates.KeyFileName,
 		),
 		esv1.XPackSecurityTransportSslCertificate: path.Join(
-			volume.ConfigVolumeMountPath,
-			volume.NodeTransportCertificatePathSegment,
-			volume.NodeTransportCertificateCertFile,
+			volume.TransportCertificatesSecretVolumeMountPath,
+			"${POD_NAME}."+certificates.CertFileName,
 		),
 		esv1.XPackSecurityTransportSslCertificateAuthorities: []string{
 			path.Join(volume.TransportCertificatesSecretVolumeMountPath, certificates.CAFileName),

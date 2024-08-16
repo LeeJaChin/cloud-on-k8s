@@ -244,6 +244,7 @@ func runAgentRecipe(
 			agentBuilder = customize(agentBuilder)
 		}
 
+		agentBuilder = agentBuilder.MoreResourcesForIssue4730()
 		return agentBuilder
 	}
 

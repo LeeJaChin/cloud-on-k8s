@@ -114,22 +114,17 @@ func BuildPodTemplateSpec(
 		}
 	}
 
-	v, err := version.Parse(es.Spec.Version)
-	if err != nil {
-		return corev1.PodTemplateSpec{}, err // error unlikely and should have been caught during validation
-	}
-
 	// build the podTemplate until we have the effective resources configured
 	builder = builder.
 		WithLabels(labels).
 		WithAnnotations(annotations).
-		WithDockerImage(es.Spec.Image, container.ImageRepository(container.ElasticsearchImage, v)).
+		WithDockerImage(es.Spec.Image, container.ImageRepository(container.ElasticsearchImage, ver)).
 		WithResources(DefaultResources).
 		WithTerminationGracePeriod(DefaultTerminationGracePeriodSeconds).
 		WithPorts(defaultContainerPorts).
-		WithReadinessProbe(*NewReadinessProbe()).
+		WithReadinessProbe(*NewReadinessProbe(ver)).
 		WithAffinity(DefaultAffinity(es.Name)).
-		WithEnv(DefaultEnvVars(es.Spec.HTTP, headlessServiceName)...).
+		WithEnv(DefaultEnvVars(ver, es.Spec.HTTP, headlessServiceName)...).
 		WithVolumes(volumes...).
 		WithVolumeMounts(volumeMounts...).
 		WithInitContainers(initContainers...).
@@ -219,6 +214,10 @@ func buildAnnotations(
 	if keystoreResources != nil {
 		// resource version of the secure settings secret to rotate the pod on secure settings change
 		_, _ = configHash.Write([]byte(keystoreResources.Hash))
+	}
+
+	if !es.Spec.Transport.TLS.SelfSignedEnabled() {
+		annotations[esv1.TransportCertDisabledAnnotationName] = "true"
 	}
 
 	// set the annotation in place
