@@ -55,13 +55,12 @@
   fixed:
     E2E_PROVIDER: ocp
   mixed:
-    - DEPLOYER_CLIENT_VERSION: "4.16.1"
+    - DEPLOYER_CLIENT_VERSION: "4.17.0"
 
 - label: eks-arm
   fixed:
     E2E_PROVIDER: eks-arm
     E2E_TEST_ENV_TAGS: arch:arm
-    E2E_TAGS: "es,kb,apm,ent,beat,agent"
     TEST_LICENSE: "" # disabled b/c https://github.com/elastic/elasticsearch/issues/68083
     MONITORING_SECRETS: "" # disabled b/c beats cannot run on ARM
 
@@ -72,7 +71,3 @@
 - label: aks
   fixed:
     E2E_PROVIDER: aks
-
-- label: tanzu
-  fixed:
-    E2E_PROVIDER: tanzu
